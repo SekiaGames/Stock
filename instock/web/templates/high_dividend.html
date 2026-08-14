@@ -1,0 +1,958 @@
+{% extends "layout/default.html" %}
+
+{% block main_content %}
+<style>
+    .high-dividend-page {
+        min-height: 100%;
+        background: #f6f8fb;
+        color: #1f2937;
+        padding: 18px 22px;
+    }
+
+    .high-dividend-toolbar {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+
+    .high-dividend-title {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 600;
+    }
+
+    .high-dividend-actions {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+    }
+
+    .stock-count-info {
+        color: #667085;
+        font-size: 13px;
+        margin-left: 10px;
+        white-space: nowrap;
+    }
+
+    .filter-control {
+        align-items: center;
+        display: inline-flex;
+        gap: 6px;
+        font-size: 11px;
+        line-height: 30px;
+        margin: 0;
+        margin-right: 12px;
+    }
+
+    .filter-control input {
+        margin: 0;
+    }
+
+    .filter-control input[type="number"] {
+        border: 1px solid #cfd6e4;
+        border-radius: 3px;
+        color: #1f2937;
+        font-size: 12px;
+        height: 28px;
+        line-height: 20px;
+        padding: 3px 6px;
+        background: #fff;
+        outline: none;
+        box-sizing: border-box;
+        -moz-appearance: textfield;
+    }
+
+    .filter-control input[type="number"]::-webkit-inner-spin-button,
+    .filter-control input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+
+    .filter-control input[type="number"]:focus {
+        border-color: #2563eb;
+        box-shadow: inset 0 0 0 1px #2563eb;
+    }
+
+    .table-shell {
+        background: #fff;
+        border: 1px solid #cfd6e4;
+        border-radius: 4px;
+        overflow: hidden;
+        display: inline-block;
+        max-width: 100%;
+        vertical-align: top;
+    }
+
+    .table-responsive {
+        margin: 0;
+        overflow-x: auto;
+        max-width: calc(100vw - 46px);
+    }
+
+    .high-dividend-table {
+        border-collapse: separate;
+        border-spacing: 0;
+        table-layout: fixed;
+        margin: 0;
+        width: auto;
+        min-width: 0;
+    }
+
+    .table.high-dividend-table > thead > tr > th {
+        background: #eef2f7;
+        border-bottom: 1px solid #b8c1d1;
+        border-right: 1px solid #cfd6e4;
+        color: #344054;
+        font-size: 12px;
+        font-weight: 600;
+        height: 32px;
+        line-height: 20px;
+        padding: 6px 8px;
+        text-align: center;
+        vertical-align: middle;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .table.high-dividend-table > thead > tr > th:last-child,
+    .table.high-dividend-table > tbody > tr > td:last-child {
+        border-right: none;
+    }
+
+    .sortable-header {
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .sort-icon {
+        color: #98a2b3;
+        margin-left: 4px;
+    }
+
+    .table.high-dividend-table > tbody > tr > td {
+        border-bottom: 1px solid #e5e7eb;
+        border-right: 1px solid #d7ddea;
+        font-size: 13px;
+        height: 28px;
+        line-height: 20px;
+        overflow: hidden;
+        padding: 3px 8px;
+        text-align: center;
+        text-overflow: ellipsis;
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+
+    .high-dividend-table tbody tr:hover td {
+        background: #f8fbff;
+    }
+
+    .number-cell {
+        font-variant-numeric: tabular-nums;
+        text-align: center;
+        white-space: nowrap;
+    }
+
+    .yield-cell {
+        color: #067647;
+        font-weight: 600;
+    }
+
+    .warning-blue-cell {
+        background: #B5D7FF;
+    }
+
+    .high-dividend-table tbody tr:hover td.warning-blue-cell {
+        background: #B5D7FF;
+    }
+
+    .ma120-buy-cell {
+        background: #FF9999;
+    }
+
+    .high-dividend-table tbody tr:hover td.ma120-buy-cell {
+        background: #FF9999;
+    }
+
+    .ma120-sell-cell {
+        background: #99E699;
+    }
+
+    .high-dividend-table tbody tr:hover td.ma120-sell-cell {
+        background: #99E699;
+    }
+
+    .changed-name {
+        color: #b42318;
+        font-weight: 600;
+    }
+
+    .dividend-changed-name {
+        color: #067647;
+        font-weight: 600;
+    }
+
+    .name-cell-watched {
+        background: #FFEBEE;
+    }
+
+    .high-dividend-table tbody tr:hover td.name-cell-watched {
+        background: #FFEBEE;
+    }
+
+    .empty-state,
+    .error-state {
+        color: #667085;
+        padding: 22px;
+        text-align: center;
+    }
+
+    .error-state {
+        color: #b42318;
+    }
+
+    @media (max-width: 768px) {
+        .high-dividend-page {
+            padding: 11px;
+        }
+
+        .high-dividend-actions {
+            width: 100%;
+        }
+    }
+</style>
+
+<div class="high-dividend-page">
+    <div class="high-dividend-toolbar">
+        <div style="display: flex; align-items: center; gap: 18px;">
+            <h1 class="high-dividend-title" style="margin: 0;">高股息列表</h1>
+            <label class="filter-control" title="勾选后隐藏扣非低于-10%的股票">
+                <span>过滤扣非</span>
+                <input id="deductedProfitFilter" type="checkbox" checked>
+            </label>
+            <label class="filter-control" title="勾选后仅显示已关注的股票">
+                <span>关注</span>
+                <input id="watchFilter" type="checkbox">
+            </label>
+            <label class="filter-control" title="股息率低于此值的股票将被隐藏">
+                <span>最低股息率%</span>
+                <input id="minDividendYieldFilter" type="number" step="0.1" min="0" value="3" style="width: 36px;">
+            </label>
+            <label class="filter-control" title="市值低于此值的股票将被隐藏（亿元）">
+                <span>最低市值</span>
+                <input id="minMarketCapFilter" type="number" step="1" min="0" placeholder="0" style="width: 62px;">
+            </label>
+            <label class="filter-control" title="息增年不足此值的股票将被隐藏">
+                <span>最低息增年</span>
+                <input id="minDividendGrowthYearsFilter" type="number" step="1" min="0" placeholder="0" style="width: 36px;">
+            </label>
+            <span class="stock-count-info" id="stockCountInfo" title="有效股票数量 = 扣除所有屏蔽文件屏蔽后的股票数量，影响实时运行效率"></span>
+        </div>
+    </div>
+
+    <div class="table-shell">
+        <div class="table-responsive">
+            <table id="highDividendTable" class="table table-hover high-dividend-table">
+                <colgroup>
+                    <col style="width: 64px;"><!-- 代码 -->
+                    <col style="width: 84px;"><!-- 名称 -->
+                    <col id="reportSeasonCol" style="width: 52px; display: none;"><!-- 财报季列（非财报季隐藏） -->
+                    <col style="width: 72px;"><!-- 扣非 -->
+                    <col style="width: 72px;"><!-- 股息率 -->
+                    <col style="width: 72px;"><!-- 息增年 -->
+                    <col style="width: 88px;"><!-- FCF/股息 -->
+                    <col style="width: 88px;"><!-- FCF/现价 -->
+                    <col style="width: 72px;"><!-- MA120 -->
+                    <col style="width: 64px;"><!-- 反弹 -->
+                    <col style="width: 64px;"><!-- 回落 -->
+                    <col style="width: 64px;"><!-- 市值 -->
+                    <col style="width: 96px;"><!-- 行业 -->
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th>代码</th>
+                        <th class="sortable-header" data-sort-key="name">名称<i class="fa fa-sort sort-icon"></i></th>
+                        <th class="sortable-header" data-sort-key="period_report_published" id="reportSeasonHeader" style="display: none;"><span id="reportSeasonLabel"></span><i class="fa fa-sort sort-icon"></i></th>
+                        <th class="number-cell sortable-header" data-sort-key="deducted_profit_growth">扣非<i class="fa fa-sort sort-icon"></i></th>
+                        <th class="number-cell sortable-header" data-sort-key="dividend_yield">股息率<i class="fa fa-sort sort-icon"></i></th>
+                        <th class="number-cell sortable-header" data-sort-key="dividend_growth_years">息增年<i class="fa fa-sort sort-icon"></i></th>
+                        <th class="number-cell sortable-header" data-sort-key="fcf_dividend">FCF/股息<i class="fa fa-sort sort-icon"></i></th>
+                        <th class="number-cell sortable-header" data-sort-key="fcf_price">FCF/现价<i class="fa fa-sort sort-icon"></i></th>
+                        <th class="number-cell sortable-header" data-sort-key="ma120_position">MA120<i class="fa fa-sort sort-icon"></i></th>
+                        <th class="number-cell sortable-header" data-sort-key="low20_bounce">反弹<i class="fa fa-sort sort-icon"></i></th>
+                        <th class="number-cell sortable-header" data-sort-key="high20_decline">回落<i class="fa fa-sort sort-icon"></i></th>
+                        <th class="number-cell sortable-header" data-sort-key="market_cap">市值<i class="fa fa-sort sort-icon"></i></th>
+                        <th class="sortable-header" data-sort-key="industry_name">行业<i class="fa fa-sort sort-icon"></i></th>
+                    </tr>
+                </thead>
+                <tbody id="dividendRows">
+                    <tr>
+                        <td class="empty-state" colspan="12">加载中...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script type="text/javascript">
+    let highDividendRows = [];
+    // 当前财报披露季的目标报告期（{label, period_date}），非财报季为 null 隐藏该列
+    let reportSeason = null;
+    let sortState = {
+        key: "name",
+        direction: "asc"
+    };
+    const FILTER_STORAGE_KEY = "highDividendDeductedProfitFilterEnabled";
+    const WATCH_FILTER_STORAGE_KEY = "highDividendWatchFilterEnabled";
+    const MIN_DIVIDEND_YIELD_STORAGE_KEY = "highDividendMinDividendYield";
+    const MIN_MARKET_CAP_STORAGE_KEY = "highDividendMinMarketCap";
+    const MIN_DIVIDEND_GROWTH_YEARS_STORAGE_KEY = "highDividendMinDividendGrowthYears";
+    const SORT_STORAGE_KEY = "highDividendSortState";
+
+    let watchList = [];
+    function formatNumber(value, digits) {
+        if (value === null || value === undefined || Number.isNaN(Number(value))) {
+            return "--";
+        }
+        return Number(value).toFixed(digits);
+    }
+
+    function formatBlankNumber(value, digits) {
+        if (value === null || value === undefined || value === "" || Number.isNaN(Number(value))) {
+            return "";
+        }
+        return Number(value).toFixed(digits);
+    }
+
+    function formatPercent(value, digits) {
+        if (digits === undefined) digits = 2;
+        if (value === null || value === undefined || Number.isNaN(Number(value))) {
+            return "--";
+        }
+        return Number(value).toFixed(digits) + "%";
+    }
+
+    function formatBlankPercent(value, digits) {
+        if (digits === undefined) digits = 2;
+        if (value === null || value === undefined || value === "" || Number.isNaN(Number(value))) {
+            return "";
+        }
+        return Number(value).toFixed(digits) + "%";
+    }
+
+    function formatSignedPercent(value) {
+        if (value === null || value === undefined || value === "" || Number.isNaN(Number(value))) {
+            return "";
+        }
+        const number = Number(value);
+        return (number > 0 ? "+" : "") + number.toFixed(2) + "%";
+    }
+
+    function formatOptionalNumber(value, digits) {
+        if (value === null || value === undefined || value === "" || Number.isNaN(Number(value))) {
+            return "";
+        }
+        return Number(value).toFixed(digits);
+    }
+
+    function normalizeNumber(value) {
+        const text = String(value || "").trim().replace(/,/g, "");
+        const match = text.match(/-?\d+(\.\d+)?/);
+        return match ? match[0] : "";
+    }
+
+    function escapeHtml(value) {
+        return String(value || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function compareRows(left, right) {
+        // 置顶优先级：买点提示 > 卖点提示 > 无提示
+        const leftSignal = left && left.ma120_signal;
+        const rightSignal = right && right.ma120_signal;
+        const leftSignalRank = leftSignal === "buy" ? 2 : (leftSignal === "sell" ? 1 : 0);
+        const rightSignalRank = rightSignal === "buy" ? 2 : (rightSignal === "sell" ? 1 : 0);
+        if (leftSignalRank !== rightSignalRank) {
+            return leftSignalRank > rightSignalRank ? -1 : 1;
+        }
+        const leftPinned = Boolean(left && (left.dividend_changed || left.finance_report_changed));
+        const rightPinned = Boolean(right && (right.dividend_changed || right.finance_report_changed));
+        if (leftPinned !== rightPinned) {
+            return leftPinned ? -1 : 1;
+        }
+
+        const direction = sortState.direction === "asc" ? 1 : -1;
+        if (sortState.key === "name") {
+            return direction * String(left.name || "").localeCompare(String(right.name || ""), "zh-Hans-CN");
+        }
+        if (sortState.key === "industry_name") {
+            return direction * String(left.industry_name || "").localeCompare(String(right.industry_name || ""), "zh-Hans-CN");
+        }
+        if (sortState.key === "period_report_published") {
+            return direction * ((left.period_report_published ? 1 : 0) - (right.period_report_published ? 1 : 0));
+        }
+        if (sortState.key === "deducted_profit_growth") {
+            return direction * (parseNullableNumber(left.deducted_profit_growth) - parseNullableNumber(right.deducted_profit_growth));
+        }
+        if (sortState.key === "fcf_price") {
+            return direction * (parseNullableNumber(left.fcf_price) - parseNullableNumber(right.fcf_price));
+        }
+        if (sortState.key === "fcf_dividend") {
+            return direction * (parseNullableNumber(left.fcf_dividend) - parseNullableNumber(right.fcf_dividend));
+        }
+        if (sortState.key === "dividend_growth_years") {
+            return direction * (parseNullableNumber(left.dividend_growth_years) - parseNullableNumber(right.dividend_growth_years));
+        }
+        if (sortState.key === "ma120_position") {
+            return direction * (parseNullableNumber(left.ma120_position) - parseNullableNumber(right.ma120_position));
+        }
+        if (sortState.key === "market_cap") {
+            return direction * (parseNullableNumber(left.market_cap) - parseNullableNumber(right.market_cap));
+        }
+        if (sortState.key === "low20_bounce") {
+            return direction * (parseNullableNumber(left.low20_bounce) - parseNullableNumber(right.low20_bounce));
+        }
+        if (sortState.key === "high20_decline") {
+            return direction * (parseNullableNumber(left.high20_decline) - parseNullableNumber(right.high20_decline));
+        }
+
+        const leftValue = left.dividend_yield === null || left.dividend_yield === undefined ? -Infinity : Number(left.dividend_yield);
+        const rightValue = right.dividend_yield === null || right.dividend_yield === undefined ? -Infinity : Number(right.dividend_yield);
+        return direction * (leftValue - rightValue);
+    }
+
+    function parseNullableNumber(value) {
+        if (value === null || value === undefined || value === "" || Number.isNaN(Number(value))) {
+            return -Infinity;
+        }
+        return Number(value);
+    }
+
+    function hasKnownValue(value) {
+        return value !== null && value !== undefined && value !== "" && !Number.isNaN(Number(value));
+    }
+
+    function yieldTooltipText(row) {
+        if (row.dividend_per_share === null || row.dividend_per_share === undefined) {
+            return "";
+        }
+        const lines = [];
+        const details = (row.details || []).slice().sort(function(a, b) {
+            return String(a.report_date || "").localeCompare(String(b.report_date || ""));
+        });
+        details.forEach(function(d) {
+            const dateText = String(d.report_date || "");
+            const year = dateText.slice(0, 4) || (row.dividend_year != null ? String(row.dividend_year) : "");
+            const month = dateText.slice(5, 7);
+            let label = "季中";
+            if (month === "12") {
+                label = "年终";
+            } else if (month === "03") {
+                label = "一季";
+            } else if (month === "09") {
+                label = "三季";
+            }
+            const perShare = d.cash_per_10 != null && d.cash_per_10 !== "" ? Number(d.cash_per_10) / 10 : null;
+            lines.push(year + label + "派息" + formatNumber(perShare, 2));
+        });
+        lines.push((row.dividend_year != null ? row.dividend_year + "年度" : "") + "合计派息" + formatNumber(row.dividend_per_share, 2));
+        lines.push(priceLine(row));
+        return lines.join("\n");
+    }
+
+    function growthYearsTooltipText(row) {
+        const items = row.dividend_amount_by_year || [];
+        if (!items.length) {
+            return "";
+        }
+        return items.map(function(item) {
+            return item.year + "年度派息" + formatNumber(item.per_share, 2);
+        }).join("\n");
+    }
+
+    function formatYi(value) {
+        if (value === null || value === undefined || value === "" || Number.isNaN(Number(value))) {
+            return "--";
+        }
+        return formatNumber(Number(value) / 100000000, 1) + "亿";
+    }
+
+    function fcfSummaryLines(row) {
+        const lines = [];
+        if (row.narrow_fcf_skipped) {
+            const epsYear = row.diluted_eps_report_name || row.diluted_eps_report_date || "";
+            lines.push((epsYear ? epsYear + " " : "") + "稀释每股收益" + formatNumber(row.diluted_eps, 2) + "元");
+            lines.push("金融行业不适用窄口径FCF，以每股收益替代");
+            return lines;
+        }
+        if (row.narrow_fcf === null || row.narrow_fcf === undefined) {
+            return lines;
+        }
+        const yearName = row.narrow_fcf_report_name || row.narrow_fcf_report_date || "";
+        lines.push((yearName ? yearName + " " : "") + "窄口径FCF" + formatNumber(row.narrow_fcf, 2) + "元/股");
+        lines.push("总额" + formatYi(row.narrow_fcf_total) + "（经营现金流净额" + formatYi(row.netcash_operate) + " - 购建资产支出" + formatYi(row.construct_long_asset) + "）");
+        return lines;
+    }
+
+    function fcfDividendTooltipText(row) {
+        return fcfSummaryLines(row).join("\n");
+    }
+
+    function fcfPriceTooltipText(row) {
+        return fcfSummaryLines(row).join("\n");
+    }
+
+    // 共用的现价行（股息率、MA120、反弹、回落 tooltip 均使用）
+    function priceLine(row) {
+        return "现价 " + (row.price_time ? row.price_time + " " : "") + formatNumber(row.current_price, 2);
+    }
+
+    function ma120TooltipText(row) {
+        if (!row.ma120_trade_date && !row.price_time) {
+            return "";
+        }
+        const lines = [priceLine(row)];
+        lines.push("MA120 " + (row.ma120_trade_date ? row.ma120_trade_date.slice(5) + " " : "")
+            + (row.ma120_time ? row.ma120_time + " " : "") + formatNumber(row.ma120, 2));
+        return lines.join("\n");
+    }
+
+    function low20TooltipText(row) {
+        if (!row.low20_trade_date && !row.price_time) {
+            return "";
+        }
+        const lines = [priceLine(row)];
+        lines.push("近20日盘中最低 " + formatNumber(row.low20_lowest_low, 2)
+            + (row.low20_lowest_date ? "（" + row.low20_lowest_date.slice(5) + "）" : ""));
+        lines.push("K线 " + (row.low20_trade_date ? row.low20_trade_date.slice(5) + " " : "") + (row.low20_time ? row.low20_time : ""));
+        return lines.join("\n");
+    }
+
+    function high20TooltipText(row) {
+        if (!row.high20_trade_date && !row.price_time) {
+            return "";
+        }
+        const lines = [priceLine(row)];
+        lines.push("近20日盘中最高 " + formatNumber(row.high20_highest_high, 2)
+            + (row.high20_highest_date ? "（" + row.high20_highest_date.slice(5) + "）" : ""));
+        lines.push("K线 " + (row.high20_trade_date ? row.high20_trade_date.slice(5) + " " : "") + (row.high20_time ? row.high20_time : ""));
+        return lines.join("\n");
+    }
+
+    function enrichRows(rows) {
+        return (rows || []).map(function(row) {
+            if (row.current_price != null && row.current_price > 0) {
+                if (row.ma120 != null && row.ma120 > 0) {
+                    row.ma120_position = (row.current_price / row.ma120 - 1) * 100;
+                    row.ma120_close_price = row.current_price;
+                }
+                if (row.low20_lowest_low != null && row.low20_lowest_low > 0) {
+                    row.low20_bounce = (row.current_price / row.low20_lowest_low - 1) * 100;
+                    row.low20_close_price = row.current_price;
+                }
+                if (row.high20_highest_high != null && row.high20_highest_high > 0) {
+                    row.high20_decline = (row.current_price / row.high20_highest_high - 1) * 100;
+                    row.high20_close_price = row.current_price;
+                }
+            }
+            return row;
+        });
+    }
+
+    function loadWatchList() {
+        return $.getJSON("/instock/high_dividend/followlist")
+            .done(function(payload) {
+                watchList = payload.follow_codes || [];
+            })
+            .fail(function() {
+                watchList = [];
+            });
+    }
+
+    function isWatched(code) {
+        return watchList.indexOf(code) !== -1;
+    }
+
+    function toggleWatch(code) {
+        $.getJSON("/instock/high_dividend/followlist", {toggle: code})
+            .done(function(payload) {
+                if (payload.followed) {
+                    if (watchList.indexOf(code) === -1) {
+                        watchList.push(code);
+                    }
+                } else {
+                    const idx = watchList.indexOf(code);
+                    if (idx !== -1) {
+                        watchList.splice(idx, 1);
+                    }
+                }
+                renderRows(highDividendRows);
+            })
+            .fail(function() {
+                // 切换失败，刷新列表以保持同步
+                loadWatchList();
+            });
+    }
+
+    function isWatchFilterEnabled() {
+        return document.getElementById("watchFilter").checked;
+    }
+
+    function sortedRows(rows) {
+        return (rows || []).slice().sort(compareRows);
+    }
+
+    function shouldHideByFilter(row) {
+        if (document.getElementById("deductedProfitFilter").checked) {
+            const hasWeakDeductedProfit = !(
+                row.deducted_profit_growth === null
+                || row.deducted_profit_growth === undefined
+                || row.deducted_profit_growth === ""
+                || Number.isNaN(Number(row.deducted_profit_growth))
+            ) && Number(row.deducted_profit_growth) < -10;
+
+            if (hasWeakDeductedProfit) {
+                return true;
+            }
+        }
+
+        if (isWatchFilterEnabled()) {
+            if (!isWatched(row.code)) {
+                return true;
+            }
+        }
+
+        const minDividendYield = parseFloat(document.getElementById("minDividendYieldFilter").value);
+        // 股息率未知（派息历史未抓取）不等于0，此时过滤不生效
+        if (!Number.isNaN(minDividendYield) && minDividendYield > 0 && hasKnownValue(row.dividend_yield)) {
+            if (Number(row.dividend_yield) < minDividendYield) {
+                return true;
+            }
+        }
+
+        const minMarketCap = parseFloat(document.getElementById("minMarketCapFilter").value);
+        if (!Number.isNaN(minMarketCap) && minMarketCap > 0) {
+            if (row.market_cap === null || row.market_cap === undefined || row.market_cap === "" || Number.isNaN(Number(row.market_cap))) {
+                return true;
+            }
+            if (Number(row.market_cap) < minMarketCap) {
+                return true;
+            }
+        }
+
+        const minDividendGrowthYears = parseFloat(document.getElementById("minDividendGrowthYearsFilter").value);
+        if (!Number.isNaN(minDividendGrowthYears) && minDividendGrowthYears > 0) {
+            if (row.dividend_growth_years === null || row.dividend_growth_years === undefined || row.dividend_growth_years === "" || Number.isNaN(Number(row.dividend_growth_years))) {
+                return true;
+            }
+            if (Number(row.dividend_growth_years) < minDividendGrowthYears) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function visibleRows(rows) {
+        return (rows || []).filter(function(row) {
+            return !shouldHideByFilter(row);
+        });
+    }
+
+    function displayedRows(rows) {
+        return sortedRows(visibleRows(rows));
+    }
+
+    function isFilterEnabled() {
+        return document.getElementById("deductedProfitFilter").checked;
+    }
+
+    function loadFilterState() {
+        const savedValue = window.localStorage.getItem(FILTER_STORAGE_KEY);
+        if (savedValue !== null) {
+            document.getElementById("deductedProfitFilter").checked = savedValue === "true";
+        }
+
+        const savedWatch = window.localStorage.getItem(WATCH_FILTER_STORAGE_KEY);
+        if (savedWatch !== null) {
+            document.getElementById("watchFilter").checked = savedWatch === "true";
+        }
+
+        const savedMinDividendYield = window.localStorage.getItem(MIN_DIVIDEND_YIELD_STORAGE_KEY);
+        if (savedMinDividendYield !== null) {
+            document.getElementById("minDividendYieldFilter").value = savedMinDividendYield;
+        }
+
+        const savedMinMarketCap = window.localStorage.getItem(MIN_MARKET_CAP_STORAGE_KEY);
+        if (savedMinMarketCap !== null) {
+            document.getElementById("minMarketCapFilter").value = savedMinMarketCap;
+        }
+
+        const savedMinDividendGrowthYears = window.localStorage.getItem(MIN_DIVIDEND_GROWTH_YEARS_STORAGE_KEY);
+        if (savedMinDividendGrowthYears !== null) {
+            document.getElementById("minDividendGrowthYearsFilter").value = savedMinDividendGrowthYears;
+        }
+    }
+
+    function saveFilterState() {
+        window.localStorage.setItem(FILTER_STORAGE_KEY, String(isFilterEnabled()));
+        window.localStorage.setItem(WATCH_FILTER_STORAGE_KEY, String(isWatchFilterEnabled()));
+        window.localStorage.setItem(MIN_DIVIDEND_YIELD_STORAGE_KEY, document.getElementById("minDividendYieldFilter").value);
+        window.localStorage.setItem(MIN_MARKET_CAP_STORAGE_KEY, document.getElementById("minMarketCapFilter").value);
+        window.localStorage.setItem(MIN_DIVIDEND_GROWTH_YEARS_STORAGE_KEY, document.getElementById("minDividendGrowthYearsFilter").value);
+    }
+
+    function loadSortState() {
+        try {
+            const saved = JSON.parse(window.localStorage.getItem(SORT_STORAGE_KEY));
+            if (saved && saved.key && saved.direction) {
+                sortState.key = saved.key;
+                sortState.direction = saved.direction;
+            }
+        } catch (error) {
+            // ignore parse errors, keep defaults
+        }
+    }
+
+    function saveSortState() {
+        window.localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify({
+            key: sortState.key,
+            direction: sortState.direction
+        }));
+    }
+
+    function tableColumnCount() {
+        return reportSeason ? 13 : 12;
+    }
+
+    // 财报季列：非财报季隐藏整列（列头、列宽、数据单元格由 renderRows 按 reportSeason 控制）
+    function updateReportSeasonColumn() {
+        const col = document.getElementById("reportSeasonCol");
+        const header = document.getElementById("reportSeasonHeader");
+        const label = document.getElementById("reportSeasonLabel");
+        if (reportSeason) {
+            label.textContent = reportSeason.label;
+            col.style.display = "";
+            header.style.display = "";
+        } else {
+            label.textContent = "";
+            col.style.display = "none";
+            header.style.display = "none";
+        }
+    }
+
+    function updateSortIcons() {
+        $(".sortable-header").each(function() {
+            const header = $(this);
+            const icon = header.find(".sort-icon");
+            icon.removeClass("fa-sort fa-sort-asc fa-sort-desc");
+            if (header.data("sort-key") === sortState.key) {
+                icon.addClass(sortState.direction === "asc" ? "fa-sort-asc" : "fa-sort-desc");
+            } else {
+                icon.addClass("fa-sort");
+            }
+        });
+    }
+
+    function renderRows(rows) {
+        const tbody = document.getElementById("dividendRows");
+        const displayRows = displayedRows(rows);
+        if (displayRows.length === 0) {
+            tbody.innerHTML = '<tr><td class="empty-state" colspan="' + tableColumnCount() + '">暂无数据</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = displayRows.map(function(row, index) {
+            return [
+                '<tr>',
+                '<td><a href="https://xueqiu.com/S/' + (row.code.charAt(0) === '6' ? 'SH' : 'SZ') + row.code + '" target="_blank" rel="noopener noreferrer">',
+                escapeHtml(row.code),
+                '</a></td>',
+                '<td class="name-cell',
+                row.finance_report_changed ? ' changed-name' : (row.dividend_changed ? ' dividend-changed-name' : ''),
+                isWatched(row.code) ? ' name-cell-watched' : '',
+                '" data-code="', escapeHtml(row.code), '">',
+                escapeHtml(row.name),
+                '</td>',
+                reportSeason ? '<td>' + (row.period_report_published ? '是' : '否') + '</td>' : '',
+                '<td class="number-cell',
+                Number(row.deducted_profit_growth) < -10 ? ' warning-blue-cell' : '',
+                '" title="',
+                escapeHtml(row.deducted_profit_growth_report_name ? row.deducted_profit_growth_report_name + '，公告 ' + (row.deducted_profit_growth_notice_date || '--') : ''),
+                '">',
+                formatBlankPercent(row.deducted_profit_growth, 1),
+                '</td>',
+                '<td class="number-cell yield-cell" title="',
+                escapeHtml(yieldTooltipText(row)),
+                '">',
+                hasKnownValue(row.dividend_yield) ? formatBlankPercent(row.dividend_yield, 1) : '--',
+                '</td>',
+                '<td class="number-cell" title="',
+                escapeHtml(growthYearsTooltipText(row)),
+                '">',
+                row.dividend_growth_years ? formatBlankNumber(row.dividend_growth_years, 0) : '',
+                '</td>',
+                '<td class="number-cell fcf-dividend-cell',
+                hasKnownValue(row.fcf_dividend) && Number(row.fcf_dividend) < 0 ? ' warning-blue-cell' : '',
+                '" title="',
+                escapeHtml(fcfDividendTooltipText(row)),
+                '">',
+                formatBlankPercent(row.fcf_dividend === null || row.fcf_dividend === undefined ? null : row.fcf_dividend * 100, 0),
+                '</td>',
+                '<td class="number-cell fcf-price-cell" title="',
+                escapeHtml(fcfPriceTooltipText(row)),
+                '">',
+                formatBlankPercent(row.fcf_price, 1),
+                '</td>',
+                '<td class="number-cell',
+                row.ma120_signal === 'buy' ? ' ma120-buy-cell' : (row.ma120_signal === 'sell' ? ' ma120-sell-cell' : ''),
+                '" title="',
+                escapeHtml(ma120TooltipText(row)),
+                '">',
+                formatBlankPercent(row.ma120_position, 1),
+                '</td>',
+                '<td class="number-cell" title="',
+                escapeHtml(low20TooltipText(row)),
+                '">',
+                formatBlankPercent(row.low20_bounce, 1),
+                '</td>',
+                '<td class="number-cell" title="',
+                escapeHtml(high20TooltipText(row)),
+                '">',
+                formatBlankPercent(row.high20_decline, 1),
+                '</td>',
+                '<td class="number-cell">',
+                formatOptionalNumber(row.market_cap, 0),
+                '</td>',
+                '<td>',
+                escapeHtml(row.industry_name || ""),
+                '</td>',
+                '</tr>'
+            ].join('');
+        }).join('');
+        updateSortIcons();
+    }
+
+    let highDividendListLoading = false;
+    // 页面轮询刷新间隔（毫秒）：默认1分钟，接口返回 refresh_interval_ms 后按配置（scheduler.conf frontend_refresh_minutes）更新
+    let pageRefreshIntervalMs = 60 * 1000;
+    let pageRefreshTimer = null;
+
+    function loadHighDividendList() {
+        // 上一次请求未完成时跳过本轮，避免并发请求导致外部流量翻倍
+        if (highDividendListLoading) {
+            return;
+        }
+        highDividendListLoading = true;
+        const tbody = document.getElementById("dividendRows");
+        // 首次加载（表格为空）时显示加载中；定时静默刷新不打断现有数据
+        if (!tbody.querySelector("td[data-code]")) {
+            tbody.innerHTML = '<tr><td class="empty-state" colspan="' + tableColumnCount() + '">加载中...</td></tr>';
+        }
+
+        $.getJSON("/instock/high_dividend/api")
+            .done(function(payload) {
+                // 服务端配置变更（frontend_refresh_minutes）后更新轮询间隔并重新计时，无需刷新页面
+                const serverRefreshIntervalMs = payload.refresh_interval_ms;
+                if (serverRefreshIntervalMs && serverRefreshIntervalMs !== pageRefreshIntervalMs) {
+                    pageRefreshIntervalMs = serverRefreshIntervalMs;
+                    startPeriodicRefresh();
+                }
+                reportSeason = payload.report_season || null;
+                updateReportSeasonColumn();
+                highDividendRows = enrichRows(payload.data || []);
+                renderRows(highDividendRows);
+                const stockCountInfo = document.getElementById("stockCountInfo");
+                if (stockCountInfo) {
+                    stockCountInfo.textContent = (payload.stock_count || 0) + "/" + (payload.total_stock_count || 0);
+                }
+                if (payload.errors && payload.errors.length > 0) {
+                    console.warn(payload.errors.join("\\n"));
+                }
+            })
+            .fail(function(xhr) {
+                if (tbody.querySelector("td[data-code]")) {
+                    // 已有数据时静默失败，保留现有数据
+                    console.warn("刷新失败，保留现有数据：" + (xhr.statusText || xhr.status));
+                } else {
+                    let message = xhr.statusText || xhr.status;
+                    if (xhr.responseJSON && xhr.responseJSON.message) {
+                        message = xhr.responseJSON.message;
+                    }
+                    tbody.innerHTML = '<tr><td class="error-state" colspan="' + tableColumnCount() + '">数据读取失败：' + escapeHtml(message) + '</td></tr>';
+                }
+            })
+            .always(function() {
+                highDividendListLoading = false;
+            });
+    }
+
+    function startPeriodicRefresh() {
+        // 前端打开时按配置间隔纯页面刷新：接口为只读缓存装配，不触发后端抓取/写文件，
+        // 数据刷新由后台定时调度（scheduler.conf interval_minutes）独立完成，互不影响；
+        // 未打开前端时无任何请求
+        if (pageRefreshTimer) {
+            window.clearInterval(pageRefreshTimer);
+        }
+        pageRefreshTimer = window.setInterval(function() {
+            loadHighDividendList();
+        }, pageRefreshIntervalMs);
+    }
+
+    $(document).ready(function() {
+        loadFilterState();
+        loadSortState();
+        $("#deductedProfitFilter").on("change", function() {
+            saveFilterState();
+            renderRows(highDividendRows);
+        });
+        $("#minDividendYieldFilter").on("change input", function() {
+            saveFilterState();
+            renderRows(highDividendRows);
+        });
+        $("#minMarketCapFilter").on("change input", function() {
+            saveFilterState();
+            renderRows(highDividendRows);
+        });
+        $("#minDividendGrowthYearsFilter").on("change input", function() {
+            saveFilterState();
+            renderRows(highDividendRows);
+        });
+        $("#watchFilter").on("change", function() {
+            saveFilterState();
+            renderRows(highDividendRows);
+        });
+        $("#dividendRows").on("click", "td.name-cell", function() {
+            const code = $(this).attr("data-code");
+            if (code) {
+                toggleWatch(code);
+            }
+        });
+        $(".sortable-header").on("click", function() {
+            const key = $(this).data("sort-key");
+            if (sortState.key === key) {
+                sortState.direction = sortState.direction === "asc" ? "desc" : "asc";
+            } else {
+                sortState.key = key;
+                sortState.direction = key === "name" ? "asc" : "desc";
+            }
+            saveSortState();
+            renderRows(highDividendRows);
+        });
+        loadWatchList().done(function() {
+            loadHighDividendList();
+        });
+        startPeriodicRefresh();
+    });
+</script>
+{% end %}
