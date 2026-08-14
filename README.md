@@ -197,18 +197,18 @@ docker run -d --name InStockDbService \
   mariadb:latest
 
 ## 给本地仓库脚本可执行权限
-ls -l /Volumes/Data/Git/stock/instock/bin/*.sh
-chmod +x /Volumes/Data/Git/stock/instock/bin/run_web.sh
+ls -l /Volumes/Data/Git/Stock/instock/bin/*.sh
+chmod +x /Volumes/Data/Git/Stock/instock/bin/run_web.sh
 终端输入“chmod +x ”然后把文件拖到终端里生成正确的地址。
 
 ## Start InStock
 docker run -dit --name InStock \
   --network InStockService \
   -p 9988:9988 \
-  -v /Volumes/Data/Git/stock:/data/InStock \
+  -v /Volumes/Data/Git/Stock:/data/InStock \
   -e db_host=InStockDbService \
   mayanghua/instock:latest
-其中“/Volumes/Data/Git/stock”指仓库地址，根据实际情况修改。
+其中“/Volumes/Data/Git/Stock”指仓库地址，根据实际情况修改。
 “/data/InStock”指容器中的地址。
 
 # 运行项目

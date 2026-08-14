@@ -45,7 +45,7 @@ docker tag docker.m.daocloud.io/mlikiowa/napcat-docker:latest mlikiowa/napcat-do
 
 # 拉取Github仓库
 sudo dnf install -y git
-git clone https://github.com/SekiaGames/stock /opt/stock
+git clone https://github.com/SekiaGames/Stock /opt/stock
 # 注：仓库中 run_web.sh 应已带可执行权限。
 ```
 
