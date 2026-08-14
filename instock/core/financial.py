@@ -177,27 +177,37 @@ def _finance_report_name(history):
     return ""
 
 
-def _read_finance_report_cache(db, code):
-    row = db.get(f"""
-        SELECT `code`, `name`, `finance_json`, `finance_hash`, `checked_on`, `checked_at`,
-               `changed_at`, `changed_report_date`
-        FROM `{_FINANCE_REPORT_CACHE_TABLE}`
-        WHERE `code` = %s
-    """, code)
-    if row is None:
-        return None, []
-    try:
-        return row, json.loads(row["finance_json"])
-    except Exception:
-        return row, []
-
-
 def _is_finance_report_cache_stale(cache_row, history, now):
     return _is_daily_report_cache_stale(
         cache_row,
         now,
         after_close_interval_hours=_REPORT_AFTER_CLOSE_REFRESH_INTERVAL_HOURS
     )
+
+
+# 批量读取单批股票数：finance_json/history_json 单行可达数十 KB，分批控制单条 SQL 与结果集大小
+_CACHE_QUERY_BATCH_SIZE = 250
+
+
+def _read_finance_report_cache_batch(db, codes):
+    """批量读取财报缓存，返回 {code: (cache_row, history)}；分批 IN 查询，
+    替代逐股查询（页面流水线每股一次 → 全量约 4 次）。"""
+    result = {}
+    for i in range(0, len(codes), _CACHE_QUERY_BATCH_SIZE):
+        batch = codes[i:i + _CACHE_QUERY_BATCH_SIZE]
+        placeholders = ",".join(["%s"] * len(batch))
+        rows = db.query(f"""
+            SELECT `code`, `name`, `finance_json`, `finance_hash`, `checked_on`, `checked_at`,
+                   `changed_at`, `changed_report_date`
+            FROM `{_FINANCE_REPORT_CACHE_TABLE}`
+            WHERE `code` IN ({placeholders})
+        """, *batch)
+        for row in rows:
+            try:
+                result[row["code"]] = (row, json.loads(row["finance_json"]))
+            except Exception:
+                result[row["code"]] = (row, [])
+    return result
 
 
 def _latest_finance_report_deducted_growth(history):
@@ -246,12 +256,12 @@ def _refresh_finance_reports(stock_codes):
         db = mysql.Connection(**mdb.MYSQL_CONN)
         _ensure_cache_tables(db)
         now = _now()
-        # 先过滤过期股票，再批量抓取（每批20只）
-        need_codes = []
-        for code in stock_codes:
-            cache_row, history = _read_finance_report_cache(db, code)
-            if _is_finance_report_cache_stale(cache_row, history, now):
-                need_codes.append(code)
+        # 先过滤过期股票，再批量抓取（每批20只）；批量读取一次，过期过滤与变更检测共用
+        cache_by_code = _read_finance_report_cache_batch(db, stock_codes)
+        need_codes = [
+            code for code in stock_codes
+            if _is_finance_report_cache_stale(*cache_by_code.get(code, (None, [])), now)
+        ]
         if not need_codes:
             return
         histories = _fetch_finance_reports_batch(need_codes)
@@ -259,7 +269,7 @@ def _refresh_finance_reports(stock_codes):
             if code not in histories:
                 continue  # 所在批次抓取失败，保持原缓存，下次重试
             fresh_history = histories[code]
-            cache_row, history = _read_finance_report_cache(db, code)
+            cache_row, history = cache_by_code.get(code, (None, []))
             old_growth = _latest_finance_report_deducted_growth(history)
             fresh_growth = _latest_finance_report_deducted_growth(fresh_history)
             changed = bool(history) and fresh_growth is not None and fresh_growth != old_growth
@@ -329,11 +339,10 @@ def _annual_report_for_year(history, year):
     return sorted(annual_rows, key=lambda item: _date_text(item.get("REPORT_DATE")), reverse=True)[0]
 
 
-def _get_cached_latest_finance_report(db, code, fiscal_year_base=None, report_season=None):
-    """读取最新财报缓存；report_season 为调用方一次计算好的当前披露季（见 _report_season_period），
-    未传入时按需自行计算（每股一次，避免每股重复读配置）。"""
-    now = _now()
-    cache_row, history = _read_finance_report_cache(db, code)
+def _build_latest_finance_report(cache_row, history, now, fiscal_year_base=None, report_season=None):
+    """由批量读取的财报缓存行装配最新财报数据（纯计算，不查库）；
+    report_season 为调用方一次计算好的当前披露季（见 _report_season_period），
+    未传入时按需自行计算。"""
     is_stale = _is_finance_report_cache_stale(cache_row, history, now)
     changed_at = None if cache_row is None else cache_row.get("changed_at")
     changed_report_date = None if cache_row is None else cache_row.get("changed_report_date")
@@ -423,18 +432,24 @@ def _fetch_cashflows_batch(codes):
     return result
 
 
-def _read_cashflow_cache(db, code):
-    row = db.get(f"""
-        SELECT `code`, `name`, `cashflow_json`, `checked_on`, `checked_at`
-        FROM `{_CASHFLOW_CACHE_TABLE}`
-        WHERE `code` = %s
-    """, code)
-    if row is None:
-        return None, []
-    try:
-        return row, json.loads(row["cashflow_json"])
-    except Exception:
-        return row, []
+def _read_cashflow_cache_batch(db, codes):
+    """批量读取现金流缓存，返回 {code: (cache_row, history)}；分批 IN 查询，
+    替代逐股查询（页面流水线每股一次 → 全量约 4 次）。"""
+    result = {}
+    for i in range(0, len(codes), _CACHE_QUERY_BATCH_SIZE):
+        batch = codes[i:i + _CACHE_QUERY_BATCH_SIZE]
+        placeholders = ",".join(["%s"] * len(batch))
+        rows = db.query(f"""
+            SELECT `code`, `name`, `cashflow_json`, `checked_on`, `checked_at`
+            FROM `{_CASHFLOW_CACHE_TABLE}`
+            WHERE `code` IN ({placeholders})
+        """, *batch)
+        for row in rows:
+            try:
+                result[row["code"]] = (row, json.loads(row["cashflow_json"]))
+            except Exception:
+                result[row["code"]] = (row, [])
+    return result
 
 
 def _is_cashflow_cache_stale(cache_row, history, now):
@@ -479,12 +494,12 @@ def _refresh_cashflows(stock_codes):
         db = mysql.Connection(**mdb.MYSQL_CONN)
         _ensure_cache_tables(db)
         now = _now()
-        # 先过滤过期股票，再批量抓取（每批20只）
-        need_codes = []
-        for code in stock_codes:
-            cache_row, history = _read_cashflow_cache(db, code)
-            if _is_cashflow_cache_stale(cache_row, history, now):
-                need_codes.append(code)
+        # 先过滤过期股票，再批量抓取（每批20只）；批量读取一次
+        cache_by_code = _read_cashflow_cache_batch(db, stock_codes)
+        need_codes = [
+            code for code in stock_codes
+            if _is_cashflow_cache_stale(*cache_by_code.get(code, (None, [])), now)
+        ]
         if not need_codes:
             return
         histories = _fetch_cashflows_batch(need_codes)
@@ -634,15 +649,13 @@ def _calculate_financial_eps(finance_history):
     }
 
 
-def _get_cached_narrow_fcf(db, code):
-    """读取窄口径FCF：取最新报告期（最新季报）数据；金融行业用稀释每股收益替代。"""
-    now = _now()
-    finance_cache_row, finance_history = _read_finance_report_cache(db, code)
+def _build_cached_narrow_fcf(finance_history, cashflow_cache_row, cashflow_history, now):
+    """由批量读取的缓存行计算窄口径FCF（纯计算，不查库）：取最新报告期（最新季报）数据；
+    金融行业用稀释每股收益替代。"""
     if not finance_history:
         return {}, False
     if _is_financial_industry(_latest_finance_report(finance_history), _latest_annual_report(finance_history)):
         return _calculate_financial_eps(finance_history), False
 
-    cashflow_cache_row, cashflow_history = _read_cashflow_cache(db, code)
     is_stale = _is_cashflow_cache_stale(cashflow_cache_row, cashflow_history, now)
     return _calculate_narrow_fcf(finance_history, cashflow_history), is_stale

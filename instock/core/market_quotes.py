@@ -348,20 +348,35 @@ def _expected_kline_date(now):
     return _previous_trading_day(now.date()).isoformat()
 
 
-def _read_kline_cache(db, code):
-    """读取该股票最近125根日K，返回与接口一致的升序 [(trade_date, close, high, low), ...]。"""
-    rows = db.query(f"""
-        SELECT `trade_date`, `close_price`, `high_price`, `low_price`
-        FROM `{_KLINE_CACHE_TABLE}`
-        WHERE `code` = %s
-        ORDER BY `trade_date` DESC
-        LIMIT 125
-    """, code)
-    return [(str(row["trade_date"])[:10],
-             _to_float(row.get("close_price")),
-             _to_float(row.get("high_price")),
-             _to_float(row.get("low_price")))
-            for row in reversed(rows)]
+# 批量读取单批股票数：每股最多125根K线，分批控制单条 SQL 与结果集大小
+_KLINE_QUERY_BATCH_SIZE = 250
+
+
+def _read_kline_cache_batch(db, codes):
+    """批量读取每股最近125根日K，返回 {code: 与接口一致的升序 [(trade_date, close, high, low), ...]}；
+    分批 IN 查询 + ROW_NUMBER 截断，替代刷新线程逐股查询。"""
+    if not codes:
+        return {}
+    result = {}
+    for i in range(0, len(codes), _KLINE_QUERY_BATCH_SIZE):
+        batch = codes[i:i + _KLINE_QUERY_BATCH_SIZE]
+        placeholders = ",".join(["%s"] * len(batch))
+        rows = db.query(f"""
+            SELECT `code`, rn, `trade_date`, `close_price`, `high_price`, `low_price` FROM (
+                SELECT `code`, `trade_date`, `close_price`, `high_price`, `low_price`,
+                       ROW_NUMBER() OVER (PARTITION BY `code` ORDER BY `trade_date` DESC) AS rn
+                FROM `{_KLINE_CACHE_TABLE}`
+                WHERE `code` IN ({placeholders})
+            ) t WHERE rn <= 125 ORDER BY `code`, rn
+        """, *batch)
+        for row in rows:
+            result.setdefault(row["code"], []).append(
+                (str(row["trade_date"])[:10],
+                 _to_float(row.get("close_price")),
+                 _to_float(row.get("high_price")),
+                 _to_float(row.get("low_price"))))
+    # SQL 内按 rn 升序（新→旧），反转成与 _read_kline_cache 一致的升序（旧→新）
+    return {code: items[::-1] for code, items in result.items()}
 
 
 def _write_kline_cache(db, code, rows):
@@ -402,17 +417,14 @@ def _read_recent_kline_closes(db, stock_codes):
     return result
 
 
-def _has_pending_ex_dividend(db, code, cached_max_date):
+def _has_pending_ex_dividend(history, cached_max_date):
     """缓存最新一根是除息日时，前复权价可能抓取于除息调整生效前，需要重新请求。
 
     前复权（qfq）价格在除息日会整体调整，日期判断无法发现，
     借助派息缓存的除息日（EX_DIVIDEND_DATE）强制更新：
     除息日 >= 缓存最新交易日 即重新请求125根。
+    （除息检测纯计算：history 由调用方批量读取传入，不查库。）
     """
-    try:
-        history, _, _ = dividend._get_cached_dividend_history(db, code)
-    except Exception:
-        return False
     for item in history or []:
         ex_date = _date_text(item.get("EX_DIVIDEND_DATE"))
         if ex_date and ex_date >= cached_max_date:
@@ -439,21 +451,31 @@ def _refresh_kline_metrics(stock_codes):
         # 读取实时价格，优先用于位置计算
         price_rows = _read_price_cache(db, stock_codes)
         price_by_code = {row["code"]: row for row in price_rows}
-        for code in stock_codes:
+        # 批量读取 MA120/反弹/回落缓存（各 1 次 IN 查询），替代逐股查询
+        ma120_by_code = _read_ma120_cache(db, stock_codes)
+        low20_by_code = _read_low20_cache(db, stock_codes)
+        high20_by_code = _read_high20_cache(db, stock_codes)
+        stale_codes = [
+            code for code in stock_codes
+            if (_is_ma120_cache_stale(ma120_by_code.get(code), now)
+                or _is_low20_cache_stale(low20_by_code.get(code), now)
+                or _is_high20_cache_stale(high20_by_code.get(code), now))
+        ]
+        # 只对过期股票批量读取K线与派息历史（除息日判断用），替代逐股查询
+        kline_by_code = _read_kline_cache_batch(db, stale_codes)
+        dividend_cache_by_code = dividend._read_dividend_history_cache_batch(db, stale_codes)
+        for code in stale_codes:
             try:
-                ma120_row = _read_ma120_cache(db, [code]).get(code)
-                low20_row = _read_low20_cache(db, [code]).get(code)
-                high20_row = _read_high20_cache(db, [code]).get(code)
-                if not (_is_ma120_cache_stale(ma120_row, now)
-                        or _is_low20_cache_stale(low20_row, now)
-                        or _is_high20_cache_stale(high20_row, now)):
-                    continue
+                ma120_row = ma120_by_code.get(code, {})
+                low20_row = low20_by_code.get(code, {})
+                high20_row = high20_by_code.get(code, {})
 
                 price_row = price_by_code.get(code)
                 current_price = _to_float(price_row.get("current_price")) if price_row else None
 
-                rows = _read_kline_cache(db, code)
-                if not rows or rows[-1][0] < expected_date or _has_pending_ex_dividend(db, code, rows[-1][0]):
+                rows = kline_by_code.get(code)
+                if not rows or rows[-1][0] < expected_date or _has_pending_ex_dividend(
+                        dividend_cache_by_code.get(code, (None, []))[1], rows[-1][0]):
                     rows = stocklist.fetch_daily_kline_rows(code, today=effective_today)
                     if rows is None or not rows:
                         continue

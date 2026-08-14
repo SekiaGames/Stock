@@ -84,19 +84,29 @@ def _history_name(history):
     return ""
 
 
-def _read_dividend_history_cache(db, code):
-    row = db.get(f"""
-        SELECT `code`, `name`, `history_json`, `history_hash`, `checked_on`, `checked_at`,
-               `changed_at`, `changed_report_date`
-        FROM `{_DIVIDEND_HISTORY_CACHE_TABLE}`
-        WHERE `code` = %s
-    """, code)
-    if row is None:
-        return None, []
-    try:
-        return row, json.loads(row["history_json"])
-    except Exception:
-        return row, []
+# 批量读取单批股票数：history_json 单行可达数十 KB，分批控制单条 SQL 与结果集大小
+_CACHE_QUERY_BATCH_SIZE = 250
+
+
+def _read_dividend_history_cache_batch(db, codes):
+    """批量读取派息历史缓存，返回 {code: (cache_row, history)}；分批 IN 查询，
+    替代逐股查询（页面流水线每股一次 → 全量约 4 次）。"""
+    result = {}
+    for i in range(0, len(codes), _CACHE_QUERY_BATCH_SIZE):
+        batch = codes[i:i + _CACHE_QUERY_BATCH_SIZE]
+        placeholders = ",".join(["%s"] * len(batch))
+        rows = db.query(f"""
+            SELECT `code`, `name`, `history_json`, `history_hash`, `checked_on`, `checked_at`,
+                   `changed_at`, `changed_report_date`
+            FROM `{_DIVIDEND_HISTORY_CACHE_TABLE}`
+            WHERE `code` IN ({placeholders})
+        """, *batch)
+        for row in rows:
+            try:
+                result[row["code"]] = (row, json.loads(row["history_json"]))
+            except Exception:
+                result[row["code"]] = (row, [])
+    return result
 
 
 def _is_dividend_history_cache_stale(cache_row, history, now):
@@ -157,12 +167,12 @@ def _refresh_dividend_histories(stock_codes):
         db = mysql.Connection(**mdb.MYSQL_CONN)
         _ensure_cache_tables(db)
         now = _now()
-        # 先过滤过期股票，再批量抓取（每批10只）
-        need_codes = []
-        for code in stock_codes:
-            cache_row, history = _read_dividend_history_cache(db, code)
-            if _is_dividend_history_cache_stale(cache_row, history, now):
-                need_codes.append(code)
+        # 先过滤过期股票，再批量抓取（每批10只）；批量读取一次，过期过滤与变更检测共用
+        cache_by_code = _read_dividend_history_cache_batch(db, stock_codes)
+        need_codes = [
+            code for code in stock_codes
+            if _is_dividend_history_cache_stale(*cache_by_code.get(code, (None, [])), now)
+        ]
         if not need_codes:
             return
         histories = _fetch_dividend_histories_batch(need_codes)
@@ -170,7 +180,7 @@ def _refresh_dividend_histories(stock_codes):
             if code not in histories:
                 continue  # 所在批次抓取失败，保持原缓存，下次重试
             fresh_history = histories[code]
-            cache_row, history = _read_dividend_history_cache(db, code)
+            cache_row, history = cache_by_code.get(code, (None, []))
             old_hash = None
             if cache_row is not None:
                 old_hash = cache_row.get("history_hash")
@@ -207,9 +217,8 @@ def _schedule_dividend_history_refresh(stock_codes):
     return thread
 
 
-def _get_cached_dividend_history(db, code):
-    now = _now()
-    cache_row, history = _read_dividend_history_cache(db, code)
+def _build_cached_dividend_history(cache_row, history, now):
+    """由批量读取的派息缓存行装配派息历史（纯计算，不查库）。"""
     changed_at = None if cache_row is None else cache_row.get("changed_at")
     changed_report_date = None if cache_row is None else cache_row.get("changed_report_date")
     is_stale = _is_dividend_history_cache_stale(cache_row, history, now)

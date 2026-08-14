@@ -43,15 +43,18 @@ from instock.core.profile import (
     _schedule_market_cap_refresh,
 )
 from instock.core.dividend import (
-    _get_cached_dividend_history,
+    _build_cached_dividend_history,
+    _read_dividend_history_cache_batch,
     _sum_fiscal_year_dividend,
     _consecutive_non_decline_years,
     _dividend_amounts_by_year,
     _schedule_dividend_history_refresh,
 )
 from instock.core.financial import (
-    _get_cached_latest_finance_report,
-    _get_cached_narrow_fcf,
+    _build_cached_narrow_fcf,
+    _build_latest_finance_report,
+    _read_cashflow_cache_batch,
+    _read_finance_report_cache_batch,
     _report_season_period,
     _schedule_finance_report_refresh,
     _schedule_cashflow_refresh,
@@ -60,10 +63,39 @@ from instock.core.financial import (
 __author__ = 'myh '
 __date__ = '2026/5/12 '
 
-# 刷新流水线单飞锁：后台定时调度调用时，已在执行则并发方走只读兜底（refresh=False），
+# 刷新流水线单飞锁：后台定时调度调用时，已在执行则并发方走只读快照，
 # 不重复请求外部接口；前端页面轮询固定走只读路径（refresh=False），不触碰锁
 _PIPELINE_LOCK = threading.Lock()
 _PIPELINE_RUNNING = False
+
+# 进程内只读快照：数据只随后台调度变化，两次调度之间页面轮询可直接复用快照，
+# 不查库不装配（页面每 1 分钟轮询一次，调度 5 分钟一次，缓存命中率约 80%）；
+# 调度刷新（refresh=True）与只读装配完成时更新，按（交易日, 市场阶段）区分，跨日/跨阶段自动重建
+_SNAPSHOT_LOCK = threading.Lock()
+_READONLY_SNAPSHOT = None
+_READONLY_SNAPSHOT_KEY = None
+
+
+def _snapshot_key(now):
+    return (now.date().isoformat(), _market_phase(now))
+
+
+def _publish_readonly_snapshot(result, now):
+    """发布只读快照：后台调度或只读装配完成后调用，页面轮询后续直接复用。"""
+    global _READONLY_SNAPSHOT, _READONLY_SNAPSHOT_KEY
+    with _SNAPSHOT_LOCK:
+        _READONLY_SNAPSHOT = result
+        _READONLY_SNAPSHOT_KEY = _snapshot_key(now)
+
+
+def _get_readonly_result(db, now):
+    """页面轮询只读路径：命中进程内快照直接返回；无快照（首次加载/跨日跨阶段）时
+    执行一次只读装配并更新快照（装配完成时发布）。"""
+    key = _snapshot_key(now)
+    with _SNAPSHOT_LOCK:
+        if _READONLY_SNAPSHOT is not None and _READONLY_SNAPSHOT_KEY == key:
+            return _READONLY_SNAPSHOT
+    return _refresh_pipeline(db, now, refresh=False)
 
 
 def _refresh_pipeline(db, now, refresh):
@@ -162,6 +194,12 @@ def _refresh_pipeline(db, now, refresh):
     stale_cashflow_codes = []
     blocked_this_run_codes = set()
 
+    # 批量读取财报/派息/现金流缓存（各约 4 次分批 IN 查询），替代逐股查询：
+    # 每只股票 4 次单行查询（财报读 2 次）→ 全量约 12 次，避免每次页面请求上千次查询
+    finance_cache_by_code = _read_finance_report_cache_batch(db, stock_codes)
+    dividend_cache_by_code = _read_dividend_history_cache_batch(db, stock_codes)
+    cashflow_cache_by_code = _read_cashflow_cache_batch(db, stock_codes)
+
     for code in stock_codes:
         price_row = price_by_code.get(code)
         current_price = None if price_row is None else _to_float(price_row.get("current_price"))
@@ -171,9 +209,10 @@ def _refresh_pipeline(db, now, refresh):
         # 收盘后当天K线已入库时最新一根为当天、倒数第二根代表昨日（买卖点提示盘后依然有效）；
         # 盘前（0点至9点半开盘）与休市（周末）K线仍为上一交易日，同样用倒数第二根延续盘后提示
         pre_close_price = _recent_pre_close(recent, phase, today_text, pre_open_expected_kline_date)
+        finance_cache_row, finance_history = finance_cache_by_code.get(code, (None, []))
         try:
-            finance_report, finance_report_stale = _get_cached_latest_finance_report(
-                db, code, fiscal_year_base, report_season=report_season)
+            finance_report, finance_report_stale = _build_latest_finance_report(
+                finance_cache_row, finance_history, now, fiscal_year_base, report_season=report_season)
             if finance_report_stale:
                 stale_finance_codes.append(code)
         except Exception as error:
@@ -187,8 +226,10 @@ def _refresh_pipeline(db, now, refresh):
         else:
             latest_fiscal_year = None
 
+        dividend_cache_row, dividend_history = dividend_cache_by_code.get(code, (None, []))
         try:
-            history, dividend_changed, dividend_history_stale = _get_cached_dividend_history(db, code)
+            history, dividend_changed, dividend_history_stale = _build_cached_dividend_history(
+                dividend_cache_row, dividend_history, now)
             if dividend_history_stale:
                 stale_dividend_codes.append(code)
             dividend_year = latest_fiscal_year
@@ -253,8 +294,10 @@ def _refresh_pipeline(db, now, refresh):
             blocked_this_run_codes.add(code)
             continue
 
+        cashflow_cache_row, cashflow_history = cashflow_cache_by_code.get(code, (None, []))
         try:
-            fcf_data, cashflow_stale = _get_cached_narrow_fcf(db, code)
+            fcf_data, cashflow_stale = _build_cached_narrow_fcf(
+                finance_history, cashflow_cache_row, cashflow_history, now)
             if cashflow_stale:
                 stale_cashflow_codes.append(code)
         except Exception as error:
@@ -411,31 +454,36 @@ def _refresh_pipeline(db, now, refresh):
         # 高关注度（股息率≥4%）写入每日清空的高关注度文件（首行当天日期，跨天重写只保留当天）
         high_attention.update_high_attention(rows, now)
     rows.sort(key=lambda item: (item["dividend_yield"] is not None, item["dividend_yield"] or 0), reverse=True)
-    return {
+    result = {
         "rows": rows,
         "errors": errors,
         "total_stock_count": total_stock_count,
         "report_season": report_season,
         "fiscal_year_base": fiscal_year_base,
     }
+    # 发布只读快照：调度刷新与只读装配都更新，页面轮询在两次调度之间直接复用
+    _publish_readonly_snapshot(result, now)
+    return result
 
 
 def run_pipeline(db, now=None, refresh=None):
     """刷新流水线入口。
 
-    refresh=None（默认）：单飞互斥，已在执行时并发调用方走只读兜底（refresh=False）——
+    refresh=None（默认）：单飞互斥，已在执行时并发调用方走只读快照——
     后台定时调度使用；
     refresh=True：强制执行全量刷新；
-    refresh=False：纯只读（前端页面轮询专用），只读缓存装配行数据，
+    refresh=False：纯只读（前端页面轮询专用），命中进程内快照直接返回，
     不请求外部接口、不递增轮询计数、不写信号/高关注度文件，与后台调度互不影响。"""
     global _PIPELINE_RUNNING
     if now is None:
         now = _now()
     if refresh is not None:
-        return _refresh_pipeline(db, now, refresh=refresh)
+        if refresh:
+            return _refresh_pipeline(db, now, refresh=True)
+        return _get_readonly_result(db, now)
     with _PIPELINE_LOCK:
         if _PIPELINE_RUNNING:
-            return _refresh_pipeline(db, now, refresh=False)
+            return _get_readonly_result(db, now)
         _PIPELINE_RUNNING = True
     try:
         return _refresh_pipeline(db, now, refresh=True)
