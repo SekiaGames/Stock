@@ -133,7 +133,7 @@ docker restart InStock
 # 版本更新
 docker stop InStock InStockDbService NapCat
 git -C $HOME/Stock fetch origin && git -C $HOME/Stock reset --hard origin/main
-reboot
+docker restart InStock InStockDbService NapCat
 ```
 
 ## 6. 绑定域名 + nginx 反向代理
