@@ -45,8 +45,8 @@ docker tag docker.m.daocloud.io/mlikiowa/napcat-docker:latest mlikiowa/napcat-do
 
 # 拉取Github仓库
 sudo dnf install -y git
-git clone https://github.com/SekiaGames/Stock /opt/stock
-# 注：仓库中 run_web.sh 应已带可执行权限。
+git clone https://github.com/SekiaGames/Stock $HOME/Stock
+# 注：仓库中 run_web.sh 应已带可执行权限。仓库实际位置：/root/Stock
 ```
 
 ## 3. 创建Docker网络和3个容器
@@ -66,7 +66,7 @@ docker run -d --name InStockDbService \
 docker run -dit --name InStock \
   --network InStockService \
   -p 9988:9988 \
-  -v /opt/stock:/data/InStock:Z \
+  -v $HOME/Stock:/data/InStock:Z \
   -e db_host=InStockDbService \
   --restart=always \
   mayanghua/instock:latest
@@ -81,7 +81,7 @@ docker run -d --name NapCat \
   mlikiowa/napcat-docker:latest
 ```
 参数解释：
-- `/opt/stock` 仓库地址，按实际情况修改
+- `$HOME/Stock` 仓库地址，按实际情况修改
 - `/data/InStock` 为容器内固定路径，映射到仓库地址，不要修改
 - `$HOME/instock-mariadb-data` mariadb数据存储目录
 
@@ -107,13 +107,13 @@ WebUI → 网络配置 → 添加网络 → **HTTP 服务器**：
 开启QQ推送：
 ```bash
 # 先确认文件已生成
-ls -l /opt/stock/instock/config/qq_push.conf
+ls -l $HOME/Stock/instock/config/qq_push.conf
 
-sudo sed -i 's/^enabled=.*/enabled=1/' /opt/stock/instock/config/qq_push.conf
+sudo sed -i 's/^enabled=.*/enabled=1/' $HOME/Stock/instock/config/qq_push.conf
 # 替换QQ群号
-sudo sed -i 's/^group_id=.*/group_id=123456789/' /opt/stock/instock/config/qq_push.conf
+sudo sed -i 's/^group_id=.*/group_id=123456789/' $HOME/Stock/instock/config/qq_push.conf
 # 替换AccessToken
-sudo sed -i 's/^token=.*/token=这里填AccessToken/' /opt/stock/instock/config/qq_push.conf
+sudo sed -i 's/^token=.*/token=这里填AccessToken/' $HOME/Stock/instock/config/qq_push.conf
 
 # 3. 生效
 docker restart InStock
@@ -132,7 +132,7 @@ docker restart InStock
 
 # 版本更新
 docker stop InStock InStockDbService NapCat
-git -C /opt/stock fetch origin && git -C /opt/stock reset --hard origin/main
+git -C $HOME/Stock fetch origin && git -C $HOME/Stock reset --hard origin/main
 reboot
 ```
 
