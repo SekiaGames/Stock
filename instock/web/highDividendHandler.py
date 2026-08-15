@@ -80,6 +80,59 @@ def _snapshot_key(now):
     return (now.date().isoformat(), _market_phase(now))
 
 
+def _filter_rows_for_frontend(rows, get_argument):
+    """按前端过滤设置过滤行数据（与前端 shouldHideByFilter 语义一致，见
+    instock/web/templates/high_dividend.html）：后端只返回符合过滤条件的行，
+    缩小轮询响应体积。过滤在只读快照之上按请求参数执行，不重建快照，
+    不同过滤组合之间互不影响快照复用。"""
+    def _parse_positive_float(name):
+        value = get_argument(name, "", True)
+        if value is None or value == "":
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        # 与前端一致：<=0 视为未设置
+        return number if number > 0 else None
+
+    def _parse_bool(name):
+        return str(get_argument(name, "", True)).strip().lower() in ("1", "true", "yes", "on")
+
+    min_dividend_yield = _parse_positive_float("min_dividend_yield")
+    min_market_cap = _parse_positive_float("min_market_cap")
+    min_dividend_growth_years = _parse_positive_float("min_dividend_growth_years")
+    deducted_profit_filter = _parse_bool("deducted_profit_filter")
+    watch_filter = _parse_bool("watch_filter")
+    if not any((min_dividend_yield, min_market_cap, min_dividend_growth_years,
+                deducted_profit_filter, watch_filter)):
+        return rows
+    follow_codes = set(followlist.get_follow_codes()) if watch_filter else None
+    filtered = []
+    for row in rows:
+        # 过滤扣非：扣非增速已知且低于-10%时隐藏（未知不隐藏，与前端一致）
+        if deducted_profit_filter and row.get("deducted_profit_growth") is not None \
+                and row["deducted_profit_growth"] < -10:
+            continue
+        # 关注：仅显示已关注的股票
+        if watch_filter and row.get("code") not in follow_codes:
+            continue
+        # 最低股息率%：股息率未知（派息历史未抓取）时不隐藏，与前端 hasKnownValue 一致
+        if min_dividend_yield is not None and row.get("dividend_yield") is not None \
+                and row["dividend_yield"] < min_dividend_yield:
+            continue
+        # 最低市值（亿元）：市值未知（未抓取）或低于阈值均隐藏
+        if min_market_cap is not None and (row.get("market_cap") is None
+                                           or row["market_cap"] < min_market_cap):
+            continue
+        # 最低息增年：息增年未知或低于阈值均隐藏
+        if min_dividend_growth_years is not None and (row.get("dividend_growth_years") is None
+                                                      or row["dividend_growth_years"] < min_dividend_growth_years):
+            continue
+        filtered.append(row)
+    return filtered
+
+
 def _publish_readonly_snapshot(result, now):
     """发布只读快照：后台调度或只读装配完成后调用，页面轮询后续直接复用。"""
     global _READONLY_SNAPSHOT, _READONLY_SNAPSHOT_KEY
@@ -504,10 +557,13 @@ class HighDividendDataHandler(webBase.BaseHandler):
         now = _now()
         # 前端轮询为纯只读：只读缓存装配行数据，不触发抓取/写文件，数据刷新由后台调度完成
         result = run_pipeline(self.db, now, refresh=False)
+        # 按前端过滤设置（查询参数）过滤行数据：后端只返回符合过滤条件的行，
+        # 缩小轮询响应体积；过滤在只读快照之上执行，不重建快照
+        rows = _filter_rows_for_frontend(result["rows"], self.get_argument)
         # report_season：当前财报披露季的目标报告期（label 供列名显示，period_date 供单股判断），非财报季为 None 隐藏该列
         payload = {
             "total_stock_count": result["total_stock_count"],
-            "stock_count": len(result["rows"]),
+            "stock_count": len(rows),
             "generated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
             # 前端页面轮询刷新间隔（毫秒），读取 instock/config/scheduler.conf 的 frontend_refresh_minutes
             "refresh_interval_ms": scheduler.get_frontend_refresh_interval_ms(),
@@ -525,7 +581,7 @@ class HighDividendDataHandler(webBase.BaseHandler):
                 "cashflow": "页面请求只读缓存；窄口径FCF取最新季报（与扣非同报告期），金融行业不抓取；年报季交易日检查，非年报季最多7天一次",
             },
             "errors": result["errors"],
-            "data": result["rows"],
+            "data": rows,
         }
         self.write(json.dumps(payload, ensure_ascii=False, default=_json_default))
 

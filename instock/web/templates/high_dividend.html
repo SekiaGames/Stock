@@ -241,7 +241,7 @@
             </label>
             <label class="filter-control" title="股息率低于此值的股票将被隐藏">
                 <span>最低股息率%</span>
-                <input id="minDividendYieldFilter" type="number" step="0.1" min="0" value="3" style="width: 36px;">
+                <input id="minDividendYieldFilter" type="number" step="0.1" min="0" value="4" style="width: 36px;">
             </label>
             <label class="filter-control" title="市值低于此值的股票将被隐藏（亿元）">
                 <span>最低市值</span>
@@ -251,7 +251,7 @@
                 <span>最低息增年</span>
                 <input id="minDividendGrowthYearsFilter" type="number" step="1" min="0" placeholder="0" style="width: 36px;">
             </label>
-            <span class="stock-count-info" id="stockCountInfo" title="有效股票数量 = 扣除所有屏蔽文件屏蔽后的股票数量，影响实时运行效率"></span>
+            <span class="stock-count-info" id="stockCountInfo" title="过滤后股票数 / 有效股票数（扣除所有屏蔽文件屏蔽后的数量）"></span>
         </div>
     </div>
 
@@ -847,6 +847,19 @@
     // 页面轮询刷新间隔（毫秒）：默认1分钟，接口返回 refresh_interval_ms 后按配置（scheduler.conf frontend_refresh_minutes）更新
     let pageRefreshIntervalMs = 60 * 1000;
     let pageRefreshTimer = null;
+    // 过滤设置变化后的防抖请求定时器：本地即时重渲染，后端随后按新过滤条件只返回
+    // 符合条件的数据（缩小响应体积），不用等下一次轮询
+    let backendFilterReloadTimer = null;
+
+    function scheduleBackendFilterReload() {
+        if (backendFilterReloadTimer) {
+            window.clearTimeout(backendFilterReloadTimer);
+        }
+        backendFilterReloadTimer = window.setTimeout(function() {
+            backendFilterReloadTimer = null;
+            loadHighDividendList();
+        }, 500);
+    }
 
     function loadHighDividendList() {
         // 上一次请求未完成时跳过本轮，避免并发请求导致外部流量翻倍
@@ -860,7 +873,14 @@
             tbody.innerHTML = '<tr><td class="empty-state" colspan="' + tableColumnCount() + '">加载中...</td></tr>';
         }
 
-        $.getJSON("/instock/high_dividend/api")
+        // 携带前端过滤设置：后端按此只返回符合过滤条件的行，缩小轮询响应体积
+        $.getJSON("/instock/high_dividend/api", {
+            deducted_profit_filter: document.getElementById("deductedProfitFilter").checked ? "1" : "0",
+            watch_filter: document.getElementById("watchFilter").checked ? "1" : "0",
+            min_dividend_yield: document.getElementById("minDividendYieldFilter").value || "",
+            min_market_cap: document.getElementById("minMarketCapFilter").value || "",
+            min_dividend_growth_years: document.getElementById("minDividendGrowthYearsFilter").value || ""
+        })
             .done(function(payload) {
                 // 服务端配置变更（frontend_refresh_minutes）后更新轮询间隔并重新计时，无需刷新页面
                 const serverRefreshIntervalMs = payload.refresh_interval_ms;
@@ -915,22 +935,27 @@
         $("#deductedProfitFilter").on("change", function() {
             saveFilterState();
             renderRows(highDividendRows);
+            scheduleBackendFilterReload();
         });
         $("#minDividendYieldFilter").on("change input", function() {
             saveFilterState();
             renderRows(highDividendRows);
+            scheduleBackendFilterReload();
         });
         $("#minMarketCapFilter").on("change input", function() {
             saveFilterState();
             renderRows(highDividendRows);
+            scheduleBackendFilterReload();
         });
         $("#minDividendGrowthYearsFilter").on("change input", function() {
             saveFilterState();
             renderRows(highDividendRows);
+            scheduleBackendFilterReload();
         });
         $("#watchFilter").on("change", function() {
             saveFilterState();
             renderRows(highDividendRows);
+            scheduleBackendFilterReload();
         });
         $("#dividendRows").on("click", "td.name-cell", function() {
             const code = $(this).attr("data-code");
