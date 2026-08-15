@@ -31,9 +31,9 @@ instock/config/blocklist_industryStocks.txt
 instock/config/blocklist_negativeEps.txt
 收益（最新已完结财年年报的稀释每股收益）为负或0的股票自动记录到此文件并屏蔽。
 
-instock/config/blocklist_dividendYieldBelowOne.txt
+instock/config/blocklist_dividendYieldBelowTwo.txt
 instock/config/blocklist_dividendGrowthYearZero.txt
-股息率低于1%的股票自动记录到此文件并屏蔽。
+股息率低于2%的股票自动记录到此文件并屏蔽。
 息增年为0的股票自动记录到此文件并屏蔽，新上市无分红公司（派息历史凑不出2个财年）同样屏蔽。
 
 instock/config/signal_notify_daily.txt

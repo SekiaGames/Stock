@@ -206,10 +206,10 @@ def _refresh_pipeline(db, now, refresh):
     blocked_negative_eps_codes = set(blocklist.get_blocked_codes(blocklist.NEGATIVE_EPS_FILE))
     if blocked_negative_eps_codes:
         stock_codes = [code for code in stock_codes if code not in blocked_negative_eps_codes]
-    # 屏蔽 blocklist_dividendYieldBelowOne.txt 中记录的股息率低于1%的股票，被屏蔽的股票不再读取缓存、不再刷新
-    blocked_yield_below_one_codes = set(blocklist.get_blocked_codes(blocklist.YIELD_BELOW_ONE_FILE))
-    if blocked_yield_below_one_codes:
-        stock_codes = [code for code in stock_codes if code not in blocked_yield_below_one_codes]
+    # 屏蔽 blocklist_dividendYieldBelowTwo.txt 中记录的股息率低于2%的股票，被屏蔽的股票不再读取缓存、不再刷新
+    blocked_yield_below_two_codes = set(blocklist.get_blocked_codes(blocklist.YIELD_BELOW_TWO_FILE))
+    if blocked_yield_below_two_codes:
+        stock_codes = [code for code in stock_codes if code not in blocked_yield_below_two_codes]
     # 屏蔽 blocklist_dividendGrowthYearZero.txt 中记录的息增年为0的股票，被屏蔽的股票不再读取缓存、不再刷新
     blocked_zero_growth_codes = set(blocklist.get_blocked_codes(blocklist.GROWTH_YEAR_ZERO_FILE))
     if blocked_zero_growth_codes:
@@ -293,7 +293,7 @@ def _refresh_pipeline(db, now, refresh):
                 ]
                 dividend_per_share = dividend_per_10 / 10
                 # 股息率未知（派息历史未抓取）时为 None 显示 --；
-                # 派息历史已抓取但最近财年无派息时股息率真实为 0（由股息率<1%规则屏蔽）
+                # 派息历史已抓取但最近财年无派息时股息率真实为 0（由股息率<2%规则屏蔽）
                 dividend_yield = None
                 if dividend_per_share > 0 and current_price and current_price > 0:
                     dividend_yield = dividend_per_share / current_price * 100
@@ -319,9 +319,9 @@ def _refresh_pipeline(db, now, refresh):
             blocklist.add_blocked(blocklist.NEGATIVE_EPS_FILE, code, stock_names.get(code, ""))
             blocked_this_run_codes.add(code)
             continue
-        # 股息率低于1%（只需派息历史与价格）：自动记录到 blocklist_dividendYieldBelowOne.txt 并屏蔽，不再读取缓存、不再刷新
-        if dividend_yield is not None and dividend_yield < 1 and history:
-            blocklist.add_blocked(blocklist.YIELD_BELOW_ONE_FILE, code, stock_names.get(code, ""))
+        # 股息率低于2%（只需派息历史与价格）：自动记录到 blocklist_dividendYieldBelowTwo.txt 并屏蔽，不再读取缓存、不再刷新
+        if dividend_yield is not None and dividend_yield < 2 and history:
+            blocklist.add_blocked(blocklist.YIELD_BELOW_TWO_FILE, code, stock_names.get(code, ""))
             blocked_this_run_codes.add(code)
             continue
         # 息增年为0（只需派息历史）：自动记录到 blocklist_dividendGrowthYearZero.txt 并屏蔽，不再读取缓存、不再刷新
