@@ -511,7 +511,7 @@ def run_pipeline(db, now=None, refresh=None):
 class HighDividendPageHandler(webBase.BaseHandler):
     def get(self):
         _ensure_cache_tables(self.db)
-        self.render("high_dividend.html")
+        self.render("high_dividend.html", lvhi_active=False)
 
 
 class HighDividendDataHandler(webBase.BaseHandler):

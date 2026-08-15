@@ -1,0 +1,909 @@
+{% extends "layout/default.html" %}
+
+{% block main_content %}
+<style>
+    .lvhi-page {
+        min-height: 100%;
+        background: #f6f8fb;
+        color: #1f2937;
+        padding: 18px 22px;
+    }
+
+    .lvhi-header {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+
+    .btn-title {
+        background: #2563eb;
+        border: none;
+        border-radius: 3px;
+        color: #fff;
+        cursor: pointer;
+        display: inline-block;
+        font-size: 15px;
+        line-height: 30px;
+        padding: 0 16px;
+        text-decoration: none;
+    }
+
+    .btn-title:hover {
+        background: #1d4ed8;
+        text-decoration: none;
+    }
+
+    .lvhi-title {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 600;
+    }
+
+    .rise {
+        color: #d92d20;
+    }
+
+    .fall {
+        color: #067647;
+    }
+
+    .panel-shell {
+        background: #fff;
+        border: 1px solid #cfd6e4;
+        border-radius: 4px;
+        margin-bottom: 16px;
+        padding: 14px 16px;
+    }
+
+    .panel-title {
+        color: #344054;
+        font-size: 15px;
+        font-weight: 600;
+        margin-bottom: 12px;
+    }
+
+    .panel-sub {
+        color: #667085;
+        font-size: 12px;
+        font-weight: 400;
+        margin-left: 8px;
+    }
+
+    .trade-form label {
+        color: #344054;
+        font-size: 12px;
+        font-weight: 600;
+        margin-right: 4px;
+        white-space: nowrap;
+    }
+
+    .trade-form input[type="text"],
+    .trade-form input[type="number"],
+    .trade-form select {
+        border: 1px solid #cfd6e4;
+        border-radius: 3px;
+        box-sizing: border-box;
+        color: #1f2937;
+        font-size: 12px;
+        height: 28px;
+        line-height: 20px;
+        outline: none;
+        padding: 3px 6px;
+        background: #fff;
+    }
+
+    .trade-form input[type="text"]:focus,
+    .trade-form input[type="number"]:focus,
+    .trade-form select:focus {
+        border-color: #2563eb;
+        box-shadow: inset 0 0 0 1px #2563eb;
+    }
+
+    .trade-form .form-row {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+
+    .trade-form .form-row input[type="radio"] {
+        margin: 0 2px 0 8px;
+    }
+
+    .btn-primary {
+        background: #2563eb;
+        border: none;
+        border-radius: 3px;
+        color: #fff;
+        cursor: pointer;
+        font-size: 13px;
+        height: 30px;
+        line-height: 30px;
+        padding: 0 16px;
+    }
+
+    .btn-primary:disabled {
+        background: #9db7ea;
+        cursor: not-allowed;
+    }
+
+    .trade-form .btn-primary {
+        margin-top: 2px;
+    }
+
+    .trade-msg {
+        color: #b42318;
+        font-size: 12px;
+        margin-top: 8px;
+    }
+
+    .trade-msg.ok {
+        color: #067647;
+    }
+
+    .table-shell {
+        overflow-x: auto;
+        max-width: calc(100vw - 46px);
+    }
+
+    .compare-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 4px;
+    }
+
+    .lvhi-table {
+        border-collapse: separate;
+        border-spacing: 0;
+        margin: 0;
+        width: 100%;
+        min-width: 640px;
+    }
+
+    .lvhi-table > thead > tr > th {
+        background: #eef2f7;
+        border-bottom: 1px solid #b8c1d1;
+        border-right: 1px solid #cfd6e4;
+        color: #344054;
+        font-size: 12px;
+        font-weight: 600;
+        height: 32px;
+        line-height: 20px;
+        padding: 6px 8px;
+        text-align: center;
+        vertical-align: middle;
+    }
+
+    .lvhi-table > tbody > tr > td {
+        border-bottom: 1px solid #e5e7eb;
+        border-right: 1px solid #d7ddea;
+        font-size: 13px;
+        height: 28px;
+        line-height: 20px;
+        overflow: hidden;
+        padding: 3px 8px;
+        text-align: center;
+        text-overflow: ellipsis;
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+
+    .lvhi-table > thead > tr > th:last-child,
+    .lvhi-table > tbody > tr > td:last-child {
+        border-right: none;
+    }
+
+    .lvhi-table tbody tr:hover td {
+        background: #f8fbff;
+    }
+
+    .tag-buy {
+        background: #fee4e2;
+        border-radius: 3px;
+        color: #b42318;
+        display: inline-block;
+        font-size: 12px;
+        line-height: 18px;
+        padding: 0 8px;
+    }
+
+    .tag-sell {
+        background: #e9f7ef;
+        border-radius: 3px;
+        color: #067647;
+        display: inline-block;
+        font-size: 12px;
+        line-height: 18px;
+        padding: 0 8px;
+    }
+
+    .empty-state {
+        color: #667085;
+        padding: 16px;
+        text-align: center;
+    }
+
+    .nav-chart-empty {
+        color: #667085;
+        font-size: 13px;
+        padding: 90px 0;
+        text-align: center;
+    }
+
+    @media (max-width: 768px) {
+        .lvhi-page {
+            padding: 11px;
+        }
+    }
+</style>
+
+<div class="lvhi-page">
+    <div class="lvhi-header">
+        <h1 class="lvhi-title">
+            <a class="btn-title" href="/instock/high_dividend">股息率组合</a>
+        </h1>
+    </div>
+
+    <!-- 组合净值曲线（日期范围可调节） -->
+    <div class="panel-shell">
+        <div class="panel-title" style="display:flex; align-items:center; gap:8px;">
+            <span>组合净值曲线</span>
+            <span class="panel-sub">与对比目标（可配置）归一化对比，区间起点=1.0</span>
+            <span style="flex:1;"></span>
+            <label for="navRangeSelect" style="font-size:12px; color:#667085;">日期范围</label>
+            <select id="navRangeSelect" style="width: 110px;">
+                <option value="ALL">全程</option>
+                <option value="3Y">近3年</option>
+                <option value="1Y" selected>近1年</option>
+                <option value="6M">近6月</option>
+                <option value="3M">近3月</option>
+                <option value="1M">近1月</option>
+                <option value="YTD">年初至今</option>
+                <option value="MTD">本月至今</option>
+            </select>
+        </div>
+        <div id="navChart" style="height: 340px;"></div>
+    </div>
+
+    <!-- 待建仓面板 -->
+    <div class="panel-shell" id="buildPanel" style="display: none;">
+        <div class="panel-title">首次建仓<span class="panel-sub">按初始资金 100% 以现价买入长江电力（600900），取整手</span></div>
+        <div class="trade-form">
+            <div class="form-row">
+                <label for="buildCapital">初始资金（元）</label>
+                <input id="buildCapital" type="number" step="1000" min="1000" style="width: 140px;">
+                <button id="buildButton" class="btn-primary">建仓（100%买入长江电力）</button>
+            </div>
+            <div id="buildMessage" class="trade-msg"></div>
+        </div>
+    </div>
+
+    <!-- 调仓工具（已建仓） -->
+    <div class="panel-shell" id="tradePanel" style="display: none;">
+        <div class="panel-title">调仓工具<span class="panel-sub">纯手动模拟买卖，A股整手（100股），价格默认可改</span></div>
+        <div class="trade-form">
+            <div class="form-row">
+                <label for="buyCode">买入代码</label>
+                <input id="buyCode" type="text" maxlength="6" list="stockPool" style="width: 90px;">
+                <datalist id="stockPool"></datalist>
+                <span id="buyName" style="color:#667085; font-size:12px;"></span>
+                <label for="buyPrice" style="margin-left:8px;">实时价</label>
+                <input id="buyPrice" type="number" step="0.01" min="0.01" readonly title="按实时价格成交" style="width: 84px; background: #f2f4f7; cursor: not-allowed;">
+                <label><input id="buyModeShares" type="radio" name="buyMode" checked> 数量</label>
+                <label><input id="buyModeAmount" type="radio" name="buyMode"> 金额</label>
+                <input id="buyShares" type="number" step="100" min="100" style="width: 100px;" placeholder="股数/金额">
+                <span id="buySharesHint" style="color:#667085; font-size:12px;"></span>
+                <button id="buyButton" class="btn-primary">执行买入</button>
+            </div>
+            <div class="form-row">
+                <label for="sellCode">卖出持仓</label>
+                <select id="sellCode" style="width: 160px;">
+                    <option value="">-- 选择持仓 --</option>
+                </select>
+                <label for="sellPrice" style="margin-left:8px;">实时价</label>
+                <input id="sellPrice" type="number" step="0.01" min="0.01" readonly title="按实时价格成交" style="width: 84px; background: #f2f4f7; cursor: not-allowed;">
+                <label for="sellShares">数量</label>
+                <input id="sellShares" type="number" step="100" min="100" style="width: 100px;">
+                <button id="sellButton" class="btn-primary">执行卖出</button>
+            </div>
+            <div id="tradeMessage" class="trade-msg"></div>
+        </div>
+    </div>
+
+    <!-- 持仓构成 -->
+    <div class="panel-shell">
+        <div class="panel-title">持仓构成</div>
+        <div class="table-shell">
+            <table id="holdingsTable" class="lvhi-table">
+                <thead>
+                    <tr>
+                        <th>代码</th>
+                        <th>名称</th>
+                        <th>现价</th>
+                        <th>涨跌幅</th>
+                        <th>持仓（股）</th>
+                        <th>成本均价</th>
+                        <th>持仓市值</th>
+                        <th>仓位占比</th>
+                        <th>持仓盈亏</th>
+                        <th>盈亏率</th>
+                    </tr>
+                </thead>
+                <tbody id="holdingsRows">
+                    <tr><td colspan="10" class="empty-state">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 调仓记录 -->
+    <div class="panel-shell">
+        <div class="panel-title">调仓记录</div>
+        <div class="table-shell">
+            <table id="tradesTable" class="lvhi-table">
+                <thead>
+                    <tr>
+                        <th>时间</th>
+                        <th>方向</th>
+                        <th>代码</th>
+                        <th>名称</th>
+                        <th>价格</th>
+                        <th>数量</th>
+                        <th>金额</th>
+                        <th>现金余额</th>
+                    </tr>
+                </thead>
+                <tbody id="tradesRows">
+                    <tr><td colspan="8" class="empty-state">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/echarts.min.js"></script>
+<script type="text/javascript">
+    // ---------- 工具函数 ----------
+    function escapeHtml(value) {
+        return String(value === null || value === undefined ? "" : value)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    function formatNumber(value, digits) {
+        if (value === null || value === undefined || isNaN(Number(value))) {
+            return "--";
+        }
+        return Number(value).toLocaleString("zh-CN", {
+            minimumFractionDigits: digits === undefined ? 0 : digits,
+            maximumFractionDigits: digits === undefined ? 0 : digits
+        });
+    }
+
+    function formatPercent(value, digits) {
+        if (value === null || value === undefined || isNaN(Number(value))) {
+            return "--";
+        }
+        const n = Number(value);
+        return (n > 0 ? "+" : "") + n.toFixed(digits === undefined ? 2 : digits) + "%";
+    }
+
+    // 涨绿跌红（A股配色）：正=红，负=绿
+    function trendClass(value) {
+        if (value === null || value === undefined || Number(value) === 0) {
+            return "";
+        }
+        return Number(value) > 0 ? "rise" : "fall";
+    }
+
+    // ---------- 页面状态 ----------
+    let lvhiLoading = false;
+    let pageRefreshIntervalMs = 60 * 1000;
+    let pageRefreshTimer = null;
+    let lastPayload = null;
+    let lastCompareNames = {};
+    let navChart = null;
+
+    // ---------- 数据加载 ----------
+    function loadLvhiData() {
+        if (lvhiLoading) {
+            return;
+        }
+        lvhiLoading = true;
+        $.getJSON("/instock/lvhi/api")
+            .done(function(payload) {
+                const serverRefreshIntervalMs = payload.refresh_interval_ms;
+                if (serverRefreshIntervalMs && serverRefreshIntervalMs !== pageRefreshIntervalMs) {
+                    pageRefreshIntervalMs = serverRefreshIntervalMs;
+                    startPeriodicRefresh();
+                }
+                lastPayload = payload;
+                lastCompareNames = payload.compare_names || {};
+                renderAll(payload);
+            })
+            .fail(function(xhr) {
+                document.getElementById("navChart").innerHTML = '<div class="nav-chart-empty">数据读取失败：' +
+                    (xhr.statusText || xhr.status) + '</div>';
+            })
+            .always(function() {
+                lvhiLoading = false;
+            });
+    }
+
+    function startPeriodicRefresh() {
+        if (pageRefreshTimer) {
+            window.clearInterval(pageRefreshTimer);
+        }
+        pageRefreshTimer = window.setInterval(function() {
+            loadLvhiData();
+        }, pageRefreshIntervalMs);
+    }
+
+    // ---------- 渲染 ----------
+    function renderAll(payload) {
+        const overview = payload.overview || {};
+        const built = payload.status === "ok";
+
+        // 面板切换
+        document.getElementById("buildPanel").style.display = built ? "none" : "";
+        document.getElementById("tradePanel").style.display = built ? "" : "none";
+
+        // 待建仓提示（自动建仓失败信息）
+        const buildMessage = document.getElementById("buildMessage");
+        if (!built) {
+            const capitalInput = document.getElementById("buildCapital");
+            if (capitalInput && (!capitalInput.value || capitalInput.value === String(payload.initial_capital))) {
+                capitalInput.value = payload.initial_capital || 1000000;
+            }
+            buildMessage.textContent = payload.build_message || "";
+            buildMessage.className = "trade-msg";
+        } else {
+            buildMessage.textContent = "";
+        }
+
+        renderStockPool(payload.pool || {});
+        renderNavChart(payload.nav);
+        renderHoldings(overview.holdings || []);
+        renderTrades(payload.trades || []);
+        if (built) {
+            renderSellOptions(overview.holdings || []);
+        }
+
+        if (payload.errors && payload.errors.length > 0) {
+            console.warn(payload.errors.join("\\n"));
+        }
+    }
+
+    const COMPARE_NAMES = { "563020": "红利低波ETF" };
+    const COMPARE_COLORS = ["#f59e0b", "#10b981", "#8b5cf6", "#ef4444", "#06b6d4", "#f97316"];
+
+    function compareLabel(code) {
+        return (lastCompareNames[code] || COMPARE_NAMES[code] || code);
+    }
+
+    // ---------- 日期范围（净值曲线可调节，见上方 navRangeSelect） ----------
+    function rangeStartDate(range) {
+        const now = new Date();
+        if (range === "ALL") {
+            return null;  // 全程
+        }
+        if (range === "YTD") {
+            return new Date(now.getFullYear(), 0, 1);
+        }
+        if (range === "MTD") {
+            return new Date(now.getFullYear(), now.getMonth(), 1);
+        }
+        const d = new Date(now);
+        if (range === "3Y") {
+            d.setFullYear(d.getFullYear() - 3);
+        } else if (range === "1Y") {
+            d.setFullYear(d.getFullYear() - 1);
+        } else if (range === "6M") {
+            d.setMonth(d.getMonth() - 6);
+        } else if (range === "3M") {
+            d.setMonth(d.getMonth() - 3);
+        } else if (range === "1M") {
+            d.setMonth(d.getMonth() - 1);
+        }
+        return d;
+    }
+
+    function currentRange() {
+        return document.getElementById("navRangeSelect").value || "1Y";
+    }
+
+    function renormalize(values) {
+        /* 序列以切片内首个有效值为 1.0 重新归一化（null 保留），保证切换范围后组合与对比目标起点对齐。 */
+        let base = null;
+        return values.map(function(v) {
+            if (v === null || v === undefined) {
+                return null;
+            }
+            if (base === null) {
+                base = v;
+            }
+            return base > 0 ? v / base : v;
+        });
+    }
+
+    function sliceNav(nav) {
+        /* 按当前日期范围截取净值序列，返回同结构的切片（数据不足返回 null）。
+        归一化序列以切片首日为 1.0 重新锚定，各曲线起点对齐。 */
+        const start = rangeStartDate(currentRange());
+        const startStr = start ? fmtDateStr(start) : "";
+        let i = 0;
+        if (startStr) {
+            while (i < nav.dates.length && nav.dates[i] < startStr) {
+                i++;
+            }
+        }
+        if (i >= nav.dates.length - 1) {
+            return null;
+        }
+        return {
+            dates: nav.dates.slice(i),
+            nav: nav.nav.slice(i),
+            normalized_nav: renormalize(nav.normalized_nav.slice(i)),
+            compares: (nav.compares || []).map(function(c) {
+                return {
+                    code: c.code,
+                    name: c.name,
+                    cg_close: c.cg_close.slice(i),
+                    normalized: renormalize(c.normalized.slice(i))
+                };
+            })
+        };
+    }
+
+    function renderStockPool(pool) {
+        // 高股息列表过滤后股票池（股息率≥4%且扣非增速>-10%，与高股息页默认一致），
+        // 下拉选项显示 代码 名称，便于按名称搜索
+        const datalist = document.getElementById("stockPool");
+        datalist.innerHTML = Object.keys(pool).map(function(code) {
+            return '<option value="' + code + '">' + pool[code] + "</option>";
+        }).join("");
+    }
+
+    function renderNavChart(nav) {
+        const container = document.getElementById("navChart");
+        const view = sliceNav(nav);
+        if (!view || view.dates.length < 2) {
+            if (navChart) {
+                navChart.dispose();
+                navChart = null;
+            }
+            container.innerHTML = '<div class="nav-chart-empty">该日期范围内净值数据不足</div>';
+            return;
+        }
+        if (!navChart) {
+            navChart = echarts.init(container);
+            window.addEventListener("resize", function() { navChart && navChart.resize(); });
+        }
+        const compares = view.compares || [];
+        const pointFormatter = function(params) {
+            const i = params[0].dataIndex;
+            /* 收集组合与全部对比目标该点的相对涨幅（区间首日=0%），按涨幅降序排列 */
+            const entries = [{
+                label: "高股息组合",
+                raw: view.nav[i],
+                rawDigits: 2,
+                unit: " 元",
+                ret: view.normalized_nav[i] === null || view.normalized_nav[i] === undefined
+                    ? null : (view.normalized_nav[i] - 1) * 100
+            }];
+            compares.forEach(function(c) {
+                entries.push({
+                    label: compareLabel(c.code),
+                    raw: c.cg_close[i],
+                    rawDigits: 4,
+                    unit: "",
+                    ret: c.normalized[i] === null || c.normalized[i] === undefined
+                        ? null : (c.normalized[i] - 1) * 100
+                });
+            });
+            entries.sort(function(a, b) {
+                if (a.ret === null && b.ret === null) return 0;
+                if (a.ret === null) return 1;  // 无数据排最后
+                if (b.ret === null) return -1;
+                return b.ret - a.ret;  // 涨幅降序
+            });
+            let text = view.dates[i] + "<br/>";
+            entries.forEach(function(e) {
+                const retText = e.ret === null ? "--"
+                    : (e.ret > 0 ? "+" : "") + e.ret.toFixed(2) + "%";
+                const rawText = e.raw === null || e.raw === undefined ? "--"
+                    : formatNumber(e.raw, e.rawDigits) + e.unit;
+                text += e.label + "：" + rawText + "（" + retText + "）<br/>";
+            });
+            return text;
+        };
+        const series = [{
+            name: "组合净值",
+            type: "line",
+            data: view.normalized_nav,
+            showSymbol: false,
+            lineStyle: { width: 2, color: "#2563eb" }
+        }];
+        const legendData = ["组合净值"];
+        compares.forEach(function(c, idx) {
+            const color = COMPARE_COLORS[idx % COMPARE_COLORS.length];
+            legendData.push(compareLabel(c.code));
+            series.push({
+                name: compareLabel(c.code),
+                type: "line",
+                data: c.normalized,
+                showSymbol: false,
+                lineStyle: { width: 1.5, color: color },
+                itemStyle: { color: color }
+            });
+        });
+        navChart.setOption({
+            animation: false,
+            tooltip: {
+                trigger: "axis",
+                formatter: pointFormatter
+            },
+            legend: {
+                top: 0,
+                data: legendData
+            },
+            grid: { left: 50, right: 20, top: 34, bottom: 30 },
+            xAxis: {
+                type: "category",
+                data: view.dates,
+                axisLabel: { fontSize: 11 }
+            },
+            yAxis: {
+                type: "value",
+                scale: true,
+                axisLabel: { fontSize: 11 }
+            },
+            series: series
+        });
+    }
+
+    function fmtDateStr(d) {
+        return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    }
+
+    function renderHoldings(holdings) {
+        const tbody = document.getElementById("holdingsRows");
+        if (!holdings.length) {
+            tbody.innerHTML = '<tr><td colspan="10" class="empty-state">暂无持仓</td></tr>';
+            return;
+        }
+        tbody.innerHTML = holdings.map(function(h) {
+            return [
+                '<tr>',
+                '<td>', escapeHtml(h.code), '</td>',
+                '<td>', escapeHtml(h.name || ""), '</td>',
+                '<td>', formatNumber(h.current_price, 2), '</td>',
+                '<td class="', trendClass(h.change_rate), '">', h.change_rate === null || h.change_rate === undefined ? "--" : formatPercent(h.change_rate, 2), '</td>',
+                '<td>', formatNumber(h.shares, 0), '</td>',
+                '<td>', formatNumber(h.avg_cost, 2), '</td>',
+                '<td>', formatNumber(h.market_value, 2), '</td>',
+                '<td>', formatPercent(h.weight, 2), '</td>',
+                '<td class="', trendClass(h.profit), '">', formatNumber(h.profit, 2), '</td>',
+                '<td class="', trendClass(h.profit_rate), '">', formatPercent(h.profit_rate, 2), '</td>',
+                '</tr>'
+            ].join("");
+        }).join("");
+    }
+
+    function renderTrades(trades) {
+        const tbody = document.getElementById("tradesRows");
+        if (!trades.length) {
+            tbody.innerHTML = '<tr><td colspan="8" class="empty-state">暂无调仓记录</td></tr>';
+            return;
+        }
+        tbody.innerHTML = trades.map(function(t) {
+            const buy = t.direction === "BUY";
+            const tag = buy ? 'class="tag-buy"' : 'class="tag-sell"';
+            return [
+                '<tr>',
+                '<td>', escapeHtml(String(t.trade_time || "").replace("T", " ").slice(0, 16)), '</td>',
+                '<td><span ', tag, '>', buy ? "买入" : "卖出", '</span></td>',
+                '<td>', escapeHtml(t.code), '</td>',
+                '<td>', escapeHtml(t.name || ""), '</td>',
+                '<td>', formatNumber(t.price, 2), '</td>',
+                '<td>', formatNumber(t.shares, 0), '</td>',
+                '<td>', formatNumber(t.amount, 2), '</td>',
+                '<td>', formatNumber(t.cash_after, 2), '</td>',
+                '</tr>'
+            ].join("");
+        }).join("");
+    }
+
+    function renderSellOptions(holdings) {
+        const select = document.getElementById("sellCode");
+        const current = select.value;
+        select.innerHTML = '<option value="">-- 选择持仓 --</option>' + holdings.map(function(h) {
+            return '<option value="' + escapeHtml(h.code) + '">' + escapeHtml(h.code + " " + (h.name || "")) + '</option>';
+        }).join("");
+        if (current) {
+            select.value = current;
+        }
+    }
+
+    // ---------- 现价查询 ----------
+    let quoteTimer = null;
+
+    function fetchQuote(code) {
+        if (!code || !/^\d{6}$/.test(code)) {
+            return;
+        }
+        $.getJSON("/instock/lvhi/quote", { code: code })
+            .done(function(resp) {
+                if (resp.ok) {
+                    document.getElementById("buyName").textContent = resp.name || "";
+                    const priceInput = document.getElementById("buyPrice");
+                    if (!priceInput.value) {
+                        priceInput.value = resp.price;
+                        updateBuySharesHint();
+                    }
+                } else {
+                    document.getElementById("buyName").textContent = resp.message || "";
+                }
+            });
+    }
+
+    function scheduleQuote() {
+        if (quoteTimer) {
+            window.clearTimeout(quoteTimer);
+        }
+        quoteTimer = window.setTimeout(function() {
+            quoteTimer = null;
+            fetchQuote(document.getElementById("buyCode").value.trim());
+        }, 300);
+    }
+
+    // ---------- 调仓执行 ----------
+    function executeTrade(params, successMessage) {
+        const button = params._button;
+        if (button) {
+            button.disabled = true;
+            delete params._button;
+        }
+        $.getJSON("/instock/lvhi/trade", params)
+            .done(function(resp) {
+                const msgEl = document.getElementById("tradeMessage");
+                msgEl.textContent = resp.message || "";
+                msgEl.className = "trade-msg" + (resp.ok ? " ok" : "");
+                if (resp.ok) {
+                    if (successMessage) {
+                        msgEl.textContent = successMessage;
+                        msgEl.className = "trade-msg ok";
+                    }
+                    document.getElementById("buyCode").value = "";
+                    document.getElementById("buyName").textContent = "";
+                    document.getElementById("buyPrice").value = "";
+                    document.getElementById("buyShares").value = "";
+                    loadLvhiData(); // 调仓成功后立即刷新，不等下一轮询
+                }
+            })
+            .fail(function(xhr) {
+                const msgEl = document.getElementById("tradeMessage");
+                msgEl.textContent = "请求失败：" + (xhr.statusText || xhr.status);
+                msgEl.className = "trade-msg";
+            })
+            .always(function() {
+                if (button) {
+                    button.disabled = false;
+                }
+            });
+    }
+
+    function updateBuySharesHint() {
+        const price = Number(document.getElementById("buyPrice").value);
+        const amount = Number(document.getElementById("buyShares").value);
+        const hint = document.getElementById("buySharesHint");
+        const amountMode = document.getElementById("buyModeAmount").checked;
+        if (!price || price <= 0 || !amount || amount <= 0) {
+            hint.textContent = "";
+            return;
+        }
+        if (amountMode) {
+            const shares = Math.floor(amount / (price * 100)) * 100;
+            hint.textContent = shares >= 100 ? "约 " + formatNumber(shares, 0) + " 股" : "金额不足以买入1手";
+        } else {
+            const estAmount = amount * price;
+            hint.textContent = "约 " + formatNumber(estAmount, 0) + " 元";
+        }
+    }
+
+    // ---------- 事件绑定 ----------
+    $(document).ready(function() {
+        $("#buyCode").on("input", function() {
+            document.getElementById("buyName").textContent = "";
+            scheduleQuote();
+        });
+        $("#buyPrice").on("input", updateBuySharesHint);
+        $("#buyShares").on("input", updateBuySharesHint);
+        $("input[name='buyMode']").on("change", function() {
+            document.getElementById("buyShares").placeholder =
+                this.id === "buyModeAmount" ? "金额（元）" : "股数";
+            updateBuySharesHint();
+        });
+
+        // 卖出持仓选择后预填现价
+        $("#sellCode").on("change", function() {
+            const code = this.value;
+            let price = "";
+            const holdings = (lastPayload && lastPayload.holdings) || [];
+            for (let i = 0; i < holdings.length; i++) {
+                if (holdings[i].code === code) {
+                    price = holdings[i].current_price;
+                    break;
+                }
+            }
+            document.getElementById("sellPrice").value = price || "";
+        });
+
+        // 日期范围切换：净值曲线重绘
+        $("#navRangeSelect").on("change", function() {
+            if (lastPayload) {
+                renderNavChart(lastPayload.nav);
+            }
+        });
+
+        $("#buildButton").on("click", function() {
+            const capital = document.getElementById("buildCapital").value;
+            if (!capital || Number(capital) <= 0) {
+                document.getElementById("buildMessage").textContent = "请输入有效的初始资金";
+                return;
+            }
+            executeTrade({ action: "build", capital: capital }, "");
+        });
+
+        $("#buyButton").on("click", function() {
+            const code = document.getElementById("buyCode").value.trim();
+            if (!/^\d{6}$/.test(code)) {
+                document.getElementById("tradeMessage").textContent = "请输入6位股票代码";
+                document.getElementById("tradeMessage").className = "trade-msg";
+                return;
+            }
+            // 成交价由后端按实时行情获取，前端无需价格（输入代码后自动显示现价供参考）
+            const amountMode = document.getElementById("buyModeAmount").checked;
+            const value = document.getElementById("buyShares").value;
+            if (!value || Number(value) <= 0) {
+                document.getElementById("tradeMessage").textContent = "请输入" + (amountMode ? "金额" : "数量");
+                document.getElementById("tradeMessage").className = "trade-msg";
+                return;
+            }
+            const params = { action: "buy", code: code };
+            if (amountMode) {
+                params.amount = value;
+                params.mode = "amount";
+            } else {
+                params.shares = value;
+            }
+            params._button = this;
+            executeTrade(params, "");
+        });
+
+        $("#sellButton").on("click", function() {
+            const code = document.getElementById("sellCode").value;
+            const shares = document.getElementById("sellShares").value;
+            if (!code) {
+                document.getElementById("tradeMessage").textContent = "请选择要卖出的持仓";
+                document.getElementById("tradeMessage").className = "trade-msg";
+                return;
+            }
+            if (!shares || Number(shares) <= 0) {
+                document.getElementById("tradeMessage").textContent = "请填写数量";
+                document.getElementById("tradeMessage").className = "trade-msg";
+                return;
+            }
+            executeTrade({ action: "sell", code: code, shares: shares, _button: this }, "");
+        });
+
+        loadLvhiData();
+        startPeriodicRefresh();
+    });
+</script>
+{% end %}

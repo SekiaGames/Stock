@@ -30,6 +30,15 @@ _KLINE_CACHE_TABLE = "cn_high_dividend_kline_cache"
 _PROFILE_CACHE_TABLE = "cn_high_dividend_profile_cache"
 _SETTINGS_TABLE = "cn_high_dividend_settings"
 _FISCAL_YEAR_BASE_KEY = "fiscal_year_base"
+_LVHI_TRADES_TABLE = "cn_high_dividend_lvhi_trades"
+_LVHI_KLINE_CACHE_TABLE = "cn_high_dividend_lvhi_kline_cache"
+_LVHI_INITIAL_CAPITAL_KEY = "lvhi_initial_capital"
+_LVHI_BUILD_STATUS_KEY = "lvhi_build_status"
+_LVHI_BUILD_DATE_KEY = "lvhi_build_date"
+_LVHI_KLINE_COUNT_KEY = "lvhi_kline_count"
+_LVHI_DEFAULT_CAPITAL = 1000000
+_LVHI_DEFAULT_KLINE_COUNT = 640
+_LVHI_BUILD_STOCK_CODE = "600900"
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 _DIVIDEND_REFRESH_HOUR = 8
 _DIVIDEND_AFTER_CLOSE_REFRESH_START_HOUR = 16
@@ -218,6 +227,53 @@ def _ensure_cache_tables(db):
             ) CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
         """)
         _CACHE_TABLE_READY = True
+
+
+_LVHI_TABLE_READY = False
+_LVHI_TABLE_LOCK = threading.Lock()
+
+
+def _ensure_lvhi_tables(db):
+    """创建 LVHI 模拟组合的两张表（账本 + 扩展K线缓存），单飞缓存，模式同 _ensure_cache_tables。
+
+    独立于 _ensure_cache_tables，避免影响高股息管线；首次使用 LVHI 页面时调用。
+    """
+    global _LVHI_TABLE_READY
+    if _LVHI_TABLE_READY:
+        return
+
+    with _LVHI_TABLE_LOCK:
+        if _LVHI_TABLE_READY:
+            return
+
+        db.execute(f"""
+            CREATE TABLE IF NOT EXISTS `{_LVHI_TRADES_TABLE}` (
+                `id` bigint NOT NULL AUTO_INCREMENT,
+                `trade_date` date NOT NULL,
+                `trade_time` datetime NOT NULL,
+                `direction` varchar(4) NOT NULL,
+                `code` varchar(6) NOT NULL,
+                `name` varchar(20) DEFAULT NULL,
+                `price` decimal(12,4) NOT NULL,
+                `shares` int NOT NULL,
+                `amount` decimal(16,2) NOT NULL,
+                `cash_after` decimal(16,2) NOT NULL,
+                `note` varchar(200) DEFAULT '',
+                `created_at` datetime NOT NULL,
+                PRIMARY KEY (`id`),
+                INDEX `idx_trade_date` (`trade_date`),
+                INDEX `idx_code` (`code`)
+            ) CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
+        """)
+        db.execute(f"""
+            CREATE TABLE IF NOT EXISTS `{_LVHI_KLINE_CACHE_TABLE}` (
+                `code` varchar(6) NOT NULL,
+                `trade_date` date NOT NULL,
+                `close_price` decimal(12,4) DEFAULT NULL,
+                PRIMARY KEY (`code`, `trade_date`)
+            ) CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
+        """)
+        _LVHI_TABLE_READY = True
 
 
 def _market_phase(now):

@@ -24,6 +24,24 @@
         font-weight: 600;
     }
 
+    .btn-title {
+        background: #2563eb;
+        border: none;
+        border-radius: 3px;
+        color: #fff;
+        cursor: pointer;
+        display: inline-block;
+        font-size: 15px;
+        line-height: 30px;
+        padding: 0 16px;
+        text-decoration: none;
+    }
+
+    .btn-title:hover {
+        background: #1d4ed8;
+        text-decoration: none;
+    }
+
     .high-dividend-actions {
         align-items: center;
         display: flex;
@@ -230,7 +248,9 @@
 <div class="high-dividend-page">
     <div class="high-dividend-toolbar">
         <div style="display: flex; align-items: center; gap: 18px;">
-            <h1 class="high-dividend-title" style="margin: 0;">高股息列表</h1>
+            <h1 class="high-dividend-title" style="margin: 0;">
+                <a class="btn-title" href="/instock/lvhi">高股息列表</a>
+            </h1>
             <label class="filter-control" title="勾选后隐藏扣非低于-10%的股票">
                 <span>过滤扣非</span>
                 <input id="deductedProfitFilter" type="checkbox" checked>

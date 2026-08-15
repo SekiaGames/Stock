@@ -20,9 +20,11 @@ logging.basicConfig(format='%(asctime)s %(message)s', filename=os.path.join(log_
 logging.getLogger().setLevel(logging.ERROR)
 import instock.core.signal_notify as signal_notify
 import instock.core.high_attention as high_attention
+import instock.core.lvhi_portfolio as lvhi_portfolio
 import instock.lib.database as mdb
 import instock.lib.mysql as mysql
 import instock.web.highDividendHandler as highDividendHandler
+import instock.web.lvhiHandler as lvhiHandler
 import instock.web.base as webBase
 import instock.web.scheduler as scheduler
 
@@ -38,6 +40,10 @@ class Application(tornado.web.Application):
             (r"/instock/high_dividend", highDividendHandler.HighDividendPageHandler),
             (r"/instock/high_dividend/api", highDividendHandler.HighDividendDataHandler),
             (r"/instock/high_dividend/followlist", highDividendHandler.FollowListHandler),
+            (r"/instock/lvhi", lvhiHandler.LvhiPageHandler),
+            (r"/instock/lvhi/api", lvhiHandler.LvhiOverviewHandler),
+            (r"/instock/lvhi/quote", lvhiHandler.LvhiQuoteHandler),
+            (r"/instock/lvhi/trade", lvhiHandler.LvhiTradeHandler),
         ]
         settings = dict(  # 配置
             template_path=os.path.join(os.path.dirname(__file__), "templates"),
@@ -52,7 +58,7 @@ class Application(tornado.web.Application):
 # 首页handler。
 class HomeHandler(webBase.BaseHandler):
     def get(self):
-        self.render("high_dividend.html")
+        self.render("high_dividend.html", lvhi_active=False)
 
 
 def main():
@@ -66,8 +72,12 @@ def main():
     signal_notify.ensure_filter_file()
     high_attention.ensure_high_attention_file()
     scheduler.ensure_scheduler_config_file()
+    lvhi_portfolio.ensure_lvhi_history_file()
+    lvhi_portfolio.ensure_lvhi_compare_file()
 
-    http_server = tornado.httpserver.HTTPServer(Application())
+    application = Application()
+    lvhi_portfolio.restore_lvhi_from_history(application.db)  # 容器重部署后按交易记录文件恢复组合
+    http_server = tornado.httpserver.HTTPServer(application)
     port = 9988
     http_server.listen(port)
 

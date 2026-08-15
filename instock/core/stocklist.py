@@ -300,30 +300,45 @@ def _parse_quote_lines(text, date):
     return rows
 
 
-def fetch_daily_kline_rows(code, today=None):
-    """请求125根前复权日K，返回升序 [(trade_date, close, high, low), ...]。
+def fetch_daily_kline_rows(code, today=None, count=125):
+    """请求前复权日K，返回升序 [(trade_date, close, high, low), ...]。
 
     腾讯K线API返回前复权（qfq）日线数据，
     确保MA120计算时历史价格已就除权除息进行调整，
     与主流股票APP的MA120数值一致。
-    125根 = 120根MA120 + 盘中排除当日未完成K线1根 + 少量容错余量。
+    count 为请求根数：默认125（= 120根MA120 + 盘中排除当日未完成K线1根 + 少量容错余量），
+    扩展根数（320/640/1024）用于组合净值回溯等需要更长历史的场景；
+    扩展根数请求失败（超时/被拒）时自动降级为默认125根重试一次。
     若 today 传入日期，则排除该日期及之后的K线（用于盘中排除当日未完成K线）。
-    上市不足125个交易日时返回实际可用的K线；请求或解析失败返回 None。
+    上市不足 count 根时返回实际可用的K线；请求或解析失败返回 None。
     """
-    market = "sh" if code.startswith("6") else "sz"
+    market = "sh" if code.startswith(("6", "5")) else "sz"  # 6xx 沪市A股，5xx 沪市ETF/基金
     url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
-    params = {
-        "param": f"{market}{code},day,,,125,qfq",
-    }
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Referer": "https://gu.qq.com/",
     }
-    _throttle_request()
-    response = requests.get(url, params=params, headers=headers, timeout=15)
-    response.raise_for_status()
 
-    payload = response.json()
+    def _request(cnt):
+        _throttle_request()
+        params = {"param": f"{market}{code},day,,,{cnt},qfq"}
+        response = requests.get(url, params=params, headers=headers, timeout=15)
+        response.raise_for_status()
+        return _parse_kline_payload(response.json(), market, code, today)
+
+    try:
+        return _request(count)
+    except Exception:
+        if count > 125:
+            try:
+                return _request(125)
+            except Exception:
+                return None
+        return None
+
+
+def _parse_kline_payload(payload, market, code, today):
+    """解析腾讯K线接口返回为升序 [(trade_date, close, high, low), ...]。"""
     stock_data = payload.get("data", {}).get(f"{market}{code}")
     if not stock_data:
         return None
