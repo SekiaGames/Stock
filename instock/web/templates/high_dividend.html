@@ -268,8 +268,6 @@
                     <col style="width: 88px;"><!-- FCF/股息 -->
                     <col style="width: 88px;"><!-- FCF/现价 -->
                     <col style="width: 72px;"><!-- MA120 -->
-                    <col style="width: 64px;"><!-- 反弹 -->
-                    <col style="width: 64px;"><!-- 回落 -->
                     <col style="width: 64px;"><!-- 市值 -->
                     <col style="width: 96px;"><!-- 行业 -->
                 </colgroup>
@@ -284,15 +282,13 @@
                         <th class="number-cell sortable-header" data-sort-key="fcf_dividend">FCF/股息<i class="fa fa-sort sort-icon"></i></th>
                         <th class="number-cell sortable-header" data-sort-key="fcf_price">FCF/现价<i class="fa fa-sort sort-icon"></i></th>
                         <th class="number-cell sortable-header" data-sort-key="ma120_position">MA120<i class="fa fa-sort sort-icon"></i></th>
-                        <th class="number-cell sortable-header" data-sort-key="low20_bounce">反弹<i class="fa fa-sort sort-icon"></i></th>
-                        <th class="number-cell sortable-header" data-sort-key="high20_decline">回落<i class="fa fa-sort sort-icon"></i></th>
                         <th class="number-cell sortable-header" data-sort-key="market_cap">市值<i class="fa fa-sort sort-icon"></i></th>
                         <th class="sortable-header" data-sort-key="industry_name">行业<i class="fa fa-sort sort-icon"></i></th>
                     </tr>
                 </thead>
                 <tbody id="dividendRows">
                     <tr>
-                        <td class="empty-state" colspan="12">加载中...</td>
+                        <td class="empty-state" colspan="11">加载中...</td>
                     </tr>
                 </tbody>
             </table>
@@ -419,12 +415,6 @@
         if (sortState.key === "market_cap") {
             return direction * (parseNullableNumber(left.market_cap) - parseNullableNumber(right.market_cap));
         }
-        if (sortState.key === "low20_bounce") {
-            return direction * (parseNullableNumber(left.low20_bounce) - parseNullableNumber(right.low20_bounce));
-        }
-        if (sortState.key === "high20_decline") {
-            return direction * (parseNullableNumber(left.high20_decline) - parseNullableNumber(right.high20_decline));
-        }
 
         const leftValue = left.dividend_yield === null || left.dividend_yield === undefined ? -Infinity : Number(left.dividend_yield);
         const rightValue = right.dividend_yield === null || right.dividend_yield === undefined ? -Infinity : Number(right.dividend_yield);
@@ -512,7 +502,7 @@
         return fcfSummaryLines(row).join("\n");
     }
 
-    // 共用的现价行（股息率、MA120、反弹、回落 tooltip 均使用）
+    // 共用的现价行（股息率、MA120 tooltip 均使用）
     function priceLine(row) {
         return "现价 " + (row.price_time ? row.price_time + " " : "") + formatNumber(row.current_price, 2);
     }
@@ -527,42 +517,12 @@
         return lines.join("\n");
     }
 
-    function low20TooltipText(row) {
-        if (!row.low20_trade_date && !row.price_time) {
-            return "";
-        }
-        const lines = [priceLine(row)];
-        lines.push("近20日盘中最低 " + formatNumber(row.low20_lowest_low, 2)
-            + (row.low20_lowest_date ? "（" + row.low20_lowest_date.slice(5) + "）" : ""));
-        lines.push("K线 " + (row.low20_trade_date ? row.low20_trade_date.slice(5) + " " : "") + (row.low20_time ? row.low20_time : ""));
-        return lines.join("\n");
-    }
-
-    function high20TooltipText(row) {
-        if (!row.high20_trade_date && !row.price_time) {
-            return "";
-        }
-        const lines = [priceLine(row)];
-        lines.push("近20日盘中最高 " + formatNumber(row.high20_highest_high, 2)
-            + (row.high20_highest_date ? "（" + row.high20_highest_date.slice(5) + "）" : ""));
-        lines.push("K线 " + (row.high20_trade_date ? row.high20_trade_date.slice(5) + " " : "") + (row.high20_time ? row.high20_time : ""));
-        return lines.join("\n");
-    }
-
     function enrichRows(rows) {
         return (rows || []).map(function(row) {
             if (row.current_price != null && row.current_price > 0) {
                 if (row.ma120 != null && row.ma120 > 0) {
                     row.ma120_position = (row.current_price / row.ma120 - 1) * 100;
                     row.ma120_close_price = row.current_price;
-                }
-                if (row.low20_lowest_low != null && row.low20_lowest_low > 0) {
-                    row.low20_bounce = (row.current_price / row.low20_lowest_low - 1) * 100;
-                    row.low20_close_price = row.current_price;
-                }
-                if (row.high20_highest_high != null && row.high20_highest_high > 0) {
-                    row.high20_decline = (row.current_price / row.high20_highest_high - 1) * 100;
-                    row.high20_close_price = row.current_price;
                 }
             }
             return row;
@@ -712,10 +672,16 @@
         window.localStorage.setItem(MIN_DIVIDEND_GROWTH_YEARS_STORAGE_KEY, document.getElementById("minDividendGrowthYearsFilter").value);
     }
 
+    // 可排序列（与表头 data-sort-key 一致）：localStorage 中已删除列（如反弹/回落）的
+    // 排序键视为无效，忽略后使用默认排序，避免静默失效
+    const SORTABLE_KEYS = ["name", "period_report_published", "deducted_profit_growth",
+        "fcf_price", "fcf_dividend", "dividend_growth_years", "ma120_position",
+        "market_cap", "industry_name"];
+
     function loadSortState() {
         try {
             const saved = JSON.parse(window.localStorage.getItem(SORT_STORAGE_KEY));
-            if (saved && saved.key && saved.direction) {
+            if (saved && SORTABLE_KEYS.indexOf(saved.key) !== -1 && saved.direction) {
                 sortState.key = saved.key;
                 sortState.direction = saved.direction;
             }
@@ -732,7 +698,7 @@
     }
 
     function tableColumnCount() {
-        return reportSeason ? 13 : 12;
+        return reportSeason ? 11 : 10;
     }
 
     // 财报季列：非财报季隐藏整列（列头、列宽、数据单元格由 renderRows 按 reportSeason 控制）
@@ -820,16 +786,6 @@
                 escapeHtml(ma120TooltipText(row)),
                 '">',
                 formatBlankPercent(row.ma120_position, 1),
-                '</td>',
-                '<td class="number-cell" title="',
-                escapeHtml(low20TooltipText(row)),
-                '">',
-                formatBlankPercent(row.low20_bounce, 1),
-                '</td>',
-                '<td class="number-cell" title="',
-                escapeHtml(high20TooltipText(row)),
-                '">',
-                formatBlankPercent(row.high20_decline, 1),
                 '</td>',
                 '<td class="number-cell">',
                 formatOptionalNumber(row.market_cap, 0),

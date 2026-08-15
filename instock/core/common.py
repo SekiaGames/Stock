@@ -26,8 +26,6 @@ _DIVIDEND_HISTORY_CACHE_TABLE = "cn_high_dividend_dividend_history_cache"
 _FINANCE_REPORT_CACHE_TABLE = "cn_high_dividend_finance_report_cache"
 _CASHFLOW_CACHE_TABLE = "cn_high_dividend_cashflow_cache"
 _MA120_CACHE_TABLE = "cn_high_dividend_ma120_cache"
-_LOW20_CACHE_TABLE = "cn_high_dividend_low20_cache"
-_HIGH20_CACHE_TABLE = "cn_high_dividend_high20_cache"
 _KLINE_CACHE_TABLE = "cn_high_dividend_kline_cache"
 _PROFILE_CACHE_TABLE = "cn_high_dividend_profile_cache"
 _SETTINGS_TABLE = "cn_high_dividend_settings"
@@ -201,38 +199,6 @@ def _ensure_cache_tables(db):
                 INDEX `idx_fetched_at` (`fetched_at`)
             ) CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
         """)
-        db.execute(f"""
-            CREATE TABLE IF NOT EXISTS `{_LOW20_CACHE_TABLE}` (
-                `code` varchar(6) NOT NULL,
-                `trade_date` date DEFAULT NULL,
-                `close_price` decimal(12,4) DEFAULT NULL,
-                `lowest_date` date DEFAULT NULL,
-                `lowest_low` decimal(12,4) DEFAULT NULL,
-                `bounce_position` decimal(12,4) DEFAULT NULL,
-                `fetched_at` datetime NOT NULL,
-                PRIMARY KEY (`code`),
-                INDEX `idx_fetched_at` (`fetched_at`)
-            ) CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
-        """)
-        db.execute(f"ALTER TABLE `{_LOW20_CACHE_TABLE}` ADD COLUMN IF NOT EXISTS `lowest_date` date DEFAULT NULL")
-        db.execute(f"ALTER TABLE `{_LOW20_CACHE_TABLE}` ADD COLUMN IF NOT EXISTS `lowest_low` decimal(12,4) DEFAULT NULL")
-        db.execute(f"ALTER TABLE `{_LOW20_CACHE_TABLE}` ADD COLUMN IF NOT EXISTS `bounce_position` decimal(12,4) DEFAULT NULL")
-        db.execute(f"""
-            CREATE TABLE IF NOT EXISTS `{_HIGH20_CACHE_TABLE}` (
-                `code` varchar(6) NOT NULL,
-                `trade_date` date DEFAULT NULL,
-                `close_price` decimal(12,4) DEFAULT NULL,
-                `highest_date` date DEFAULT NULL,
-                `highest_high` decimal(12,4) DEFAULT NULL,
-                `decline_position` decimal(12,4) DEFAULT NULL,
-                `fetched_at` datetime NOT NULL,
-                PRIMARY KEY (`code`),
-                INDEX `idx_fetched_at` (`fetched_at`)
-            ) CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
-        """)
-        db.execute(f"ALTER TABLE `{_HIGH20_CACHE_TABLE}` ADD COLUMN IF NOT EXISTS `highest_date` date DEFAULT NULL")
-        db.execute(f"ALTER TABLE `{_HIGH20_CACHE_TABLE}` ADD COLUMN IF NOT EXISTS `highest_high` decimal(12,4) DEFAULT NULL")
-        db.execute(f"ALTER TABLE `{_HIGH20_CACHE_TABLE}` ADD COLUMN IF NOT EXISTS `decline_position` decimal(12,4) DEFAULT NULL")
         db.execute(f"""
             CREATE TABLE IF NOT EXISTS `{_KLINE_CACHE_TABLE}` (
                 `code` varchar(6) NOT NULL,

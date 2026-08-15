@@ -352,14 +352,12 @@ def fetch_daily_kline_rows(code, today=None):
 
 
 def compute_kline_metrics(rows, current_price=None):
-    """从升序日K行计算 MA120/20日反弹/20日回落，同份数据复用。
+    """从升序日K行计算 MA120，同份数据复用。
 
-    MA120取后120根收盘价，反弹取后25根盘中最低价，回落取后25根盘中最高价。
-    current_price 若传入正数，则优先用作当前价格计算三个位置（盘中实时价格）。
-    返回 {"ma120": {...}|None, "low20": {...}|None, "high20": {...}|None}，
-    数据不足的指标为 None，不影响其余指标。
+    MA120取后120根收盘价；current_price 若传入正数，则优先用作当前价格计算位置（盘中实时价格）。
+    返回 {"ma120": {...}|None}，数据不足时 ma120 为 None。
     """
-    result = {"ma120": None, "low20": None, "high20": None}
+    result = {"ma120": None}
     if not rows:
         return result
 
@@ -376,41 +374,11 @@ def compute_kline_metrics(rows, current_price=None):
                 "ma120_position": (effective_close / ma120 - 1) * 100,
             }
 
-    # 反弹：后25根中最近20个交易日盘中最低价
-    low_rows = [row for row in rows if row[3] is not None and row[3] > 0]
-    if len(low_rows) >= 20:
-        lowest_row = min(low_rows[-20:], key=lambda r: r[3])
-        lowest_trade_date, _, _, lowest_low = lowest_row
-        current_trade_date, current_close, _, _ = low_rows[-1]
-        effective_close = current_price if current_price is not None and current_price > 0 else current_close
-        result["low20"] = {
-            "trade_date": current_trade_date,
-            "close_price": effective_close,
-            "lowest_date": lowest_trade_date,
-            "lowest_low": lowest_low,
-            "bounce_position": (effective_close / lowest_low - 1) * 100,
-        }
-
-    # 回落：后25根中最近20个交易日盘中最高价
-    high_rows = [row for row in rows if row[2] is not None and row[2] > 0]
-    if len(high_rows) >= 20:
-        highest_row = max(high_rows[-20:], key=lambda r: r[2])
-        highest_trade_date, _, highest_high, _ = highest_row
-        current_trade_date, current_close, _, _ = high_rows[-1]
-        effective_close = current_price if current_price is not None and current_price > 0 else current_close
-        result["high20"] = {
-            "trade_date": current_trade_date,
-            "close_price": effective_close,
-            "highest_date": highest_trade_date,
-            "highest_high": highest_high,
-            "decline_position": (effective_close / highest_high - 1) * 100,
-        }
-
     return result
 
 
 def fetch_daily_kline_metrics(code, today=None, current_price=None):
-    """请求一次并计算 MA120/20日反弹/20日回落（请求+计算的便捷组合）。"""
+    """请求一次并计算 MA120（请求+计算的便捷组合）。"""
     rows = fetch_daily_kline_rows(code, today)
     if rows is None:
         return None

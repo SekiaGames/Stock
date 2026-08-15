@@ -17,8 +17,6 @@ from instock.core.common import (
     _ensure_cache_tables,
     _PRICE_CACHE_TABLE,
     _MA120_CACHE_TABLE,
-    _LOW20_CACHE_TABLE,
-    _HIGH20_CACHE_TABLE,
     _KLINE_CACHE_TABLE,
     _SETTINGS_TABLE,
 )
@@ -143,12 +141,11 @@ def _write_price_cache(db, price_data, now):
                    phase)
 
 
-def _sync_indicator_cache_for_prices(db, stock_codes, now):
-    """用现价同步更新 MA120/反弹/回落缓存中的 close_price 和百分比值。"""
+def _sync_ma120_cache_for_prices(db, stock_codes, now):
+    """用现价同步更新 MA120 缓存中的 close_price 和 ma120_position。"""
     price_rows = _read_price_cache(db, stock_codes)
     price_by_code = {row["code"]: _to_float(row.get("current_price")) for row in price_rows}
 
-    # MA120
     ma120_rows = _read_ma120_cache(db, stock_codes)
     for code, row in ma120_rows.items():
         current_price = price_by_code.get(code)
@@ -163,38 +160,6 @@ def _sync_indicator_cache_for_prices(db, stock_codes, now):
             SET `close_price` = %s, `ma120_position` = %s
             WHERE `code` = %s
         """, current_price, new_ma120_pos, code)
-
-    # 反弹
-    low20_rows = _read_low20_cache(db, stock_codes)
-    for code, row in low20_rows.items():
-        current_price = price_by_code.get(code)
-        if current_price is None or current_price <= 0:
-            continue
-        lowest_low = _to_float(row.get("lowest_low"))
-        if lowest_low is None or lowest_low <= 0:
-            continue
-        new_bounce = (current_price / lowest_low - 1) * 100
-        db.execute(f"""
-            UPDATE `{_LOW20_CACHE_TABLE}`
-            SET `close_price` = %s, `bounce_position` = %s
-            WHERE `code` = %s
-        """, current_price, new_bounce, code)
-
-    # 回落
-    high20_rows = _read_high20_cache(db, stock_codes)
-    for code, row in high20_rows.items():
-        current_price = price_by_code.get(code)
-        if current_price is None or current_price <= 0:
-            continue
-        highest_high = _to_float(row.get("highest_high"))
-        if highest_high is None or highest_high <= 0:
-            continue
-        new_decline = (current_price / highest_high - 1) * 100
-        db.execute(f"""
-            UPDATE `{_HIGH20_CACHE_TABLE}`
-            SET `close_price` = %s, `decline_position` = %s
-            WHERE `code` = %s
-        """, current_price, new_decline, code)
 
 
 def _get_cached_price_rows(db, stock_codes, errors, high_attention_codes=None):
@@ -217,9 +182,9 @@ def _get_cached_price_rows(db, stock_codes, errors, high_attention_codes=None):
             if price_data is not None:
                 _write_price_cache(db, price_data, now)
                 cached_rows = _read_price_cache(db, stock_codes)
-                # 同步更新 MA120/反弹/回落缓存（只更新本次刷新的股票）
+                # 同步更新 MA120 缓存（只更新本次刷新的股票）
                 try:
-                    _sync_indicator_cache_for_prices(db, stale_codes, now)
+                    _sync_ma120_cache_for_prices(db, stale_codes, now)
                 except Exception:
                     pass
         except Exception as error:
@@ -433,7 +398,7 @@ def _has_pending_ex_dividend(history, cached_max_date):
 
 
 def _refresh_kline_metrics(stock_codes):
-    """刷新 MA120/反弹/回落：K线缓存已含最新交易日则直接用缓存计算，否则重新请求覆盖。
+    """刷新 MA120：K线缓存已含最新交易日则直接用缓存计算，否则重新请求覆盖。
 
     K线缓存为空或缺少最新交易日K线（如容器停机未更新）时请求一次125根并覆盖；
     缓存已含最新交易日时不再请求外部接口，仅用缓存重算并写入过期的指标缓存。
@@ -451,15 +416,10 @@ def _refresh_kline_metrics(stock_codes):
         # 读取实时价格，优先用于位置计算
         price_rows = _read_price_cache(db, stock_codes)
         price_by_code = {row["code"]: row for row in price_rows}
-        # 批量读取 MA120/反弹/回落缓存（各 1 次 IN 查询），替代逐股查询
         ma120_by_code = _read_ma120_cache(db, stock_codes)
-        low20_by_code = _read_low20_cache(db, stock_codes)
-        high20_by_code = _read_high20_cache(db, stock_codes)
         stale_codes = [
             code for code in stock_codes
-            if (_is_ma120_cache_stale(ma120_by_code.get(code), now)
-                or _is_low20_cache_stale(low20_by_code.get(code), now)
-                or _is_high20_cache_stale(high20_by_code.get(code), now))
+            if _is_ma120_cache_stale(ma120_by_code.get(code), now)
         ]
         # 只对过期股票批量读取K线与派息历史（除息日判断用），替代逐股查询
         kline_by_code = _read_kline_cache_batch(db, stale_codes)
@@ -467,8 +427,6 @@ def _refresh_kline_metrics(stock_codes):
         for code in stale_codes:
             try:
                 ma120_row = ma120_by_code.get(code, {})
-                low20_row = low20_by_code.get(code, {})
-                high20_row = high20_by_code.get(code, {})
 
                 price_row = price_by_code.get(code)
                 current_price = _to_float(price_row.get("current_price")) if price_row else None
@@ -484,10 +442,6 @@ def _refresh_kline_metrics(stock_codes):
                 metrics = stocklist.compute_kline_metrics(rows, current_price)
                 if metrics.get("ma120") is not None and _is_ma120_cache_stale(ma120_row, now):
                     _write_ma120_cache(db, code, metrics["ma120"], now)
-                if metrics.get("low20") is not None and _is_low20_cache_stale(low20_row, now):
-                    _write_low20_cache(db, code, metrics["low20"], now)
-                if metrics.get("high20") is not None and _is_high20_cache_stale(high20_row, now):
-                    _write_high20_cache(db, code, metrics["high20"], now)
             except Exception as error:
                 # 单只股票请求失败只跳过该股，不影响其余股票
                 print(f"market_quotes K线刷新跳过 {code}：{error}")
@@ -526,111 +480,5 @@ def _schedule_kline_refresh(stock_codes):
     return thread
 
 
-def _read_low20_cache(db, stock_codes):
-    if not stock_codes:
-        return {}
-    placeholders = ",".join(["%s"] * len(stock_codes))
-    rows = db.query(f"""
-        SELECT `code`, `trade_date`, `close_price`, `lowest_date`, `lowest_low`,
-               `bounce_position`, `fetched_at`
-        FROM `{_LOW20_CACHE_TABLE}`
-        WHERE `code` IN ({placeholders})
-    """, *stock_codes)
-    return {row["code"]: row for row in rows}
-
-
-def _is_low20_cache_stale(cache_row, now):
-    phase = _market_phase(now)
-    if cache_row is None:
-        return True
-    fetched_at = cache_row.get("fetched_at")
-    if not fetched_at:
-        return True
-    if phase in ("intraday", "before_open"):
-        # 下午3点前使用前一交易日收盘数据
-        prev_trading_day = _previous_trading_day(now.date())
-        prev_close = datetime.datetime.combine(prev_trading_day, datetime.time(15, 0))
-        return fetched_at < prev_close
-    if phase == "after_close":
-        close_time = datetime.datetime.combine(now.date(), datetime.time(15, 0))
-        return fetched_at < close_time
-    return fetched_at.date() < now.date()
-
-
-def _write_low20_cache(db, code, low20_row, now):
-    db.execute(f"""
-        INSERT INTO `{_LOW20_CACHE_TABLE}`
-            (`code`, `trade_date`, `close_price`, `lowest_date`, `lowest_low`,
-             `bounce_position`, `fetched_at`)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            `trade_date` = VALUES(`trade_date`),
-            `close_price` = VALUES(`close_price`),
-            `lowest_date` = VALUES(`lowest_date`),
-            `lowest_low` = VALUES(`lowest_low`),
-            `bounce_position` = VALUES(`bounce_position`),
-            `fetched_at` = VALUES(`fetched_at`)
-    """,
-               code,
-               low20_row.get("trade_date"),
-               low20_row.get("close_price"),
-               low20_row.get("lowest_date"),
-               low20_row.get("lowest_low"),
-               low20_row.get("bounce_position"),
-               now.strftime("%Y-%m-%d %H:%M:%S"))
-
-
-def _read_high20_cache(db, stock_codes):
-    if not stock_codes:
-        return {}
-    placeholders = ",".join(["%s"] * len(stock_codes))
-    rows = db.query(f"""
-        SELECT `code`, `trade_date`, `close_price`, `highest_date`, `highest_high`,
-               `decline_position`, `fetched_at`
-        FROM `{_HIGH20_CACHE_TABLE}`
-        WHERE `code` IN ({placeholders})
-    """, *stock_codes)
-    return {row["code"]: row for row in rows}
-
-
-def _is_high20_cache_stale(cache_row, now):
-    phase = _market_phase(now)
-    if cache_row is None:
-        return True
-    fetched_at = cache_row.get("fetched_at")
-    if not fetched_at:
-        return True
-    if phase in ("intraday", "before_open"):
-        # 下午3点前使用前一交易日收盘数据
-        prev_trading_day = _previous_trading_day(now.date())
-        prev_close = datetime.datetime.combine(prev_trading_day, datetime.time(15, 0))
-        return fetched_at < prev_close
-    if phase == "after_close":
-        close_time = datetime.datetime.combine(now.date(), datetime.time(15, 0))
-        return fetched_at < close_time
-    return fetched_at.date() < now.date()
-
-
-def _write_high20_cache(db, code, high20_row, now):
-    db.execute(f"""
-        INSERT INTO `{_HIGH20_CACHE_TABLE}`
-            (`code`, `trade_date`, `close_price`, `highest_date`, `highest_high`,
-             `decline_position`, `fetched_at`)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            `trade_date` = VALUES(`trade_date`),
-            `close_price` = VALUES(`close_price`),
-            `highest_date` = VALUES(`highest_date`),
-            `highest_high` = VALUES(`highest_high`),
-            `decline_position` = VALUES(`decline_position`),
-            `fetched_at` = VALUES(`fetched_at`)
-    """,
-               code,
-               high20_row.get("trade_date"),
-               high20_row.get("close_price"),
-               high20_row.get("highest_date"),
-               high20_row.get("highest_high"),
-               high20_row.get("decline_position"),
-               now.strftime("%Y-%m-%d %H:%M:%S"))
 
 

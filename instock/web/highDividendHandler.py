@@ -25,12 +25,8 @@ from instock.core.market_quotes import (
     _get_cached_price_rows,
     _read_price_cache,
     _read_ma120_cache,
-    _read_low20_cache,
-    _read_high20_cache,
     _read_recent_kline_closes,
     _is_ma120_cache_stale,
-    _is_low20_cache_stale,
-    _is_high20_cache_stale,
     _recent_pre_close,
     _ma120_trade_signal,
     _schedule_kline_refresh,
@@ -219,19 +215,9 @@ def _refresh_pipeline(db, now, refresh):
     if blocked_zero_growth_codes:
         stock_codes = [code for code in stock_codes if code not in blocked_zero_growth_codes]
     ma120_by_code = _read_ma120_cache(db, stock_codes)
-    low20_by_code = _read_low20_cache(db, stock_codes)
-    high20_by_code = _read_high20_cache(db, stock_codes)
     stale_ma120_codes = [
         code for code in stock_codes
         if _is_ma120_cache_stale(ma120_by_code.get(code), now)
-    ]
-    stale_low20_codes = [
-        code for code in stock_codes
-        if _is_low20_cache_stale(low20_by_code.get(code), now)
-    ]
-    stale_high20_codes = [
-        code for code in stock_codes
-        if _is_high20_cache_stale(high20_by_code.get(code), now)
     ]
     # 行业只抓一次不刷新；市值每周刷新
     stale_industry_codes = [
@@ -359,10 +345,6 @@ def _refresh_pipeline(db, now, refresh):
 
         ma120_row = ma120_by_code.get(code, {})
         ma120_position = None if not ma120_row else _to_float(ma120_row.get("ma120_position"))
-        low20_row = low20_by_code.get(code, {})
-        low20_bounce = None if not low20_row else _to_float(low20_row.get("bounce_position"))
-        high20_row = high20_by_code.get(code, {})
-        high20_decline = None if not high20_row else _to_float(high20_row.get("decline_position"))
         narrow_fcf = fcf_data.get("narrow_fcf")
         fcf_dividend = None
         fcf_price = None
@@ -431,22 +413,6 @@ def _refresh_pipeline(db, now, refresh):
                 pre_close_price,
                 ma120_position,
                 None if not ma120_row else _to_float(ma120_row.get("ma120"))),
-            "low20_trade_date": "" if not low20_row else _date_text(low20_row.get("trade_date")),
-            "low20_time": "" if not low20_row else (
-                low20_row["fetched_at"].strftime("%H:%M:%S")
-                if hasattr(low20_row.get("fetched_at"), "strftime") else str(low20_row.get("fetched_at") or "")[11:19]),
-            "low20_close_price": None if not low20_row else _to_float(low20_row.get("close_price")),
-            "low20_lowest_date": "" if not low20_row else _date_text(low20_row.get("lowest_date")),
-            "low20_lowest_low": None if not low20_row else _to_float(low20_row.get("lowest_low")),
-            "low20_bounce": low20_bounce,
-            "high20_trade_date": "" if not high20_row else _date_text(high20_row.get("trade_date")),
-            "high20_time": "" if not high20_row else (
-                high20_row["fetched_at"].strftime("%H:%M:%S")
-                if hasattr(high20_row.get("fetched_at"), "strftime") else str(high20_row.get("fetched_at") or "")[11:19]),
-            "high20_close_price": None if not high20_row else _to_float(high20_row.get("close_price")),
-            "high20_highest_date": "" if not high20_row else _date_text(high20_row.get("highest_date")),
-            "high20_highest_high": None if not high20_row else _to_float(high20_row.get("highest_high")),
-            "high20_decline": high20_decline,
             "price_date": "" if price_row is None else _date_text(price_row.get("price_date")),
             "price_time": "" if price_row is None else (
                 price_row["fetched_at"].strftime("%m-%d %H:%M:%S")
@@ -473,7 +439,7 @@ def _refresh_pipeline(db, now, refresh):
     # 本次新屏蔽的股票不再安排任何缓存刷新
     if blocked_this_run_codes:
         for stale_list in (
-            stale_ma120_codes, stale_low20_codes, stale_high20_codes,
+            stale_ma120_codes,
             stale_industry_codes, stale_market_cap_codes,
             stale_finance_codes, stale_dividend_codes,
         ):
@@ -481,7 +447,7 @@ def _refresh_pipeline(db, now, refresh):
 
     if refresh:
         # 优先请求屏蔽相关数据（行业→收益→股息率/息增年），尽快完成屏蔽
-        # 其余数据（市值、现金流、MA120、20日高低点）等屏蔽相关数据完成后才请求，屏蔽的股票不再请求
+        # 其余数据（市值、现金流、MA120）等屏蔽相关数据完成后才请求，屏蔽的股票不再请求
         priority_threads = [t for t in (
             _schedule_industry_refresh(stale_industry_codes),
             _schedule_finance_report_refresh(stale_finance_codes),
@@ -491,10 +457,7 @@ def _refresh_pipeline(db, now, refresh):
         def _schedule_tail_refreshes():
             _schedule_market_cap_refresh(stale_market_cap_codes)
             _schedule_cashflow_refresh(stale_cashflow_codes)
-            # MA120/反弹/回落合并在一次K线请求中刷新
-            stale_kline_codes = list(dict.fromkeys(
-                stale_ma120_codes + stale_low20_codes + stale_high20_codes))
-            _schedule_kline_refresh(stale_kline_codes)
+            _schedule_kline_refresh(stale_ma120_codes)
 
         if priority_threads:
             def _run_priority_then_tail():
@@ -574,8 +537,6 @@ class HighDividendDataHandler(webBase.BaseHandler):
                 "price": "后台调度每次刷新高关注度（股息率≥4%），其余每6次调度刷新一次，盘后保持收盘价",
                 "profile": "页面请求只读缓存；行业只抓一次不刷新，市值取每周最后一个交易日收盘数据、周五收盘后刷新，无缓存立即抓取",
                 "ma120": "页面请求只读缓存；盘中可刷新（使用前一交易日收盘数据），下午3点后刷新当日收盘数据",
-                "low20": "页面请求只读缓存；盘中可刷新（使用前一交易日收盘数据），下午3点后刷新当日收盘数据",
-                "high20": "页面请求只读缓存；盘中可刷新（使用前一交易日收盘数据），下午3点后刷新当日收盘数据",
                 "dividend_history": "页面请求只读缓存；交易日每天8点后检查一次，16点至23点最多每4小时复查一次",
                 "finance_report": "页面请求只读缓存；交易日每天8点后检查一次，16点至23点最多每4小时复查一次",
                 "cashflow": "页面请求只读缓存；窄口径FCF取最新季报（与扣非同报告期），金融行业不抓取；年报季交易日检查，非年报季最多7天一次",
