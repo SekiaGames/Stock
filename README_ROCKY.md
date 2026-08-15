@@ -131,9 +131,11 @@ docker logs --tail 200 InStock
 docker restart InStock
 
 # 版本更新
-docker stop InStock InStockDbService NapCat
+rm -rf $HOME/Stock
+git clone https://github.com/SekiaGames/Stock $HOME/Stock
+docker stop InStockDbService NapCat InStock
 git -C $HOME/Stock fetch origin && git -C $HOME/Stock reset --hard origin/main
-docker restart InStock InStockDbService NapCat
+docker restart InStockDbService NapCat InStock
 ```
 
 ## 6. 绑定域名 + nginx 反向代理
