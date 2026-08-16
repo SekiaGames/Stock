@@ -123,6 +123,7 @@ docker restart InStock
 # 版本更新
 rm -rf $HOME/Stock
 git clone https://github.com/SekiaGames/Stock $HOME/Stock
+
 docker stop InStockDbService NapCat InStock
 git -C $HOME/Stock fetch origin && git -C $HOME/Stock reset --hard origin/main
 docker restart InStockDbService NapCat InStock
@@ -131,22 +132,19 @@ docker restart InStockDbService NapCat InStock
 ## 6. 绑定域名 + nginx 反向代理（海外服务器无需备案）
 
 ```bash
-# Swap分区：小内存服务器建议开启（4G内存也保留1G作OOM保险，防MariaDB等容器被OOM-kill）
-# 自动按内存大小分配：<2G→2G，≥2G→1G
-TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
-if [ "$TOTAL_MEM" -lt 2048 ]; then SWAP_SIZE=2G; else SWAP_SIZE=1G; fi
-# 已存在旧Swap时先关闭删除（如2G缩小到1G），全新服务器这两行会直接跳过
-sudo swapoff /swapfile 2>/dev/null || true
-sudo rm -f /swapfile 2>/dev/null || true
-sudo fallocate -l $SWAP_SIZE /swapfile
+#开启Swap分区 2G
+sudo fallocate -l 2G /swapfile
 sudo chmod 600 /swapfile
 sudo mkswap /swapfile
 sudo swapon /swapfile
-grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-# 降低swap使用倾向（默认60→10）：内存充足时优先用内存，swap仅作保险
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+#降低swap使用倾向（默认60→10）：内存充足时优先用内存，swap仅作保险
 echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swap.conf
 sudo sysctl -p /etc/sysctl.d/99-swap.conf
-free -h   # 确认 Swap 生效
+
+#确认 Swap 生效
+free -h
 
 #安装Nginx
 sudo dnf install -y nginx
