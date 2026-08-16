@@ -1,6 +1,6 @@
-# 高股息列表 — Rocky Linux 9.8 部署指南
+# 高股息列表-腾讯云
 
-将本应用部署到 Rocky Linux 9.8（x86_64）服务器的完整流程。
+将本应用部署到 Rocky Linux 9.4（x86_64）服务器的完整流程。
 与 [README.md](README.md)（macOS 本机部署）的区别：
 
 - 包管理用 dnf 代替 brew
@@ -8,12 +8,10 @@
 - 仓库通过 git clone 获取，不再挂载本机目录，本机不编辑上传。
 - 安装Docker容器时，多了`:Z`，用于应对Rocky独有的SELinux机制。
 
-## 0. 连接阿里云ECS实例
-阿里云-云服务器ECS-实例-远程连接-通过VNC连接-root账户登录
+## 0. 连接服务器
 
 ## 1. 环境准备
-
-设置阿里云安全组端口：
+腾讯云-轻量服务器-防火墙
 - Instock：9988/tcp
 - NapCat：6099/tcp
 - 80/tcp（HTTP）
@@ -28,25 +26,15 @@ sudo timedatectl set-timezone Asia/Shanghai
 
 ```bash
 sudo dnf install -y dnf-plugins-core
-sudo dnf config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/rhel/docker-ce.repo
+sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
 sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 sudo systemctl enable --now docker
 docker version
 
-# 拉取容器 镜像站不可用时更换
-docker pull docker.1panel.live/library/mariadb:latest
-docker tag docker.1panel.live/library/mariadb:latest mariadb:latest
-
-docker pull docker.1panel.live/mayanghua/instock:latest
-docker tag docker.1panel.live/mayanghua/instock:latest mayanghua/instock:latest
-
-docker pull docker.m.daocloud.io/mlikiowa/napcat-docker:latest
-docker tag docker.m.daocloud.io/mlikiowa/napcat-docker:latest mlikiowa/napcat-docker:latest
-
 # 拉取Github仓库
 sudo dnf install -y git
 git clone https://github.com/SekiaGames/Stock $HOME/Stock
-# 注：仓库中 run_web.sh 应已带可执行权限。仓库实际位置：/root/Stock
+#注：仓库中 run_web.sh 应已带可执行权限。仓库实际位置：/root/Stock
 ```
 
 ## 3. 创建Docker网络和3个容器
@@ -89,6 +77,8 @@ docker run -d --name NapCat \
 ```bash
 # 获取NapCat`登录token`
 docker logs -f NapCat
+docker logs --tail 200 NapCat
+#退出日志模式：Ctrl+C
 ```
 
 远程访问NapCat：
@@ -138,16 +128,30 @@ git -C $HOME/Stock fetch origin && git -C $HOME/Stock reset --hard origin/main
 docker restart InStockDbService NapCat InStock
 ```
 
-## 6. 绑定域名 + nginx 反向代理
+## 6. 绑定域名 + nginx 反向代理（海外服务器无需备案）
 
 ```bash
+# Swap分区：小内存服务器建议开启（4G内存也保留1G作OOM保险，防MariaDB等容器被OOM-kill）
+# 自动按内存大小分配：<2G→2G，≥2G→1G
+TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
+if [ "$TOTAL_MEM" -lt 2048 ]; then SWAP_SIZE=2G; else SWAP_SIZE=1G; fi
+# 已存在旧Swap时先关闭删除（如2G缩小到1G），全新服务器这两行会直接跳过
+sudo swapoff /swapfile 2>/dev/null || true
+sudo rm -f /swapfile 2>/dev/null || true
+sudo fallocate -l $SWAP_SIZE /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+# 降低swap使用倾向（默认60→10）：内存充足时优先用内存，swap仅作保险
+echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swap.conf
+sudo sysctl -p /etc/sysctl.d/99-swap.conf
+free -h   # 确认 Swap 生效
+
+#安装Nginx
 sudo dnf install -y nginx
 sudo systemctl enable --now nginx
-```
 
-编辑 `/etc/nginx/conf.d/instock.conf`（把 `stock.sekia.games` 换成自己的域名）：
-
-```bash
 sudo tee /etc/nginx/conf.d/instock.conf > /dev/null <<'EOF'
 server {
     listen 80;
@@ -164,32 +168,57 @@ server {
 EOF
 
 sudo nginx -t
-# 之后访问stock.sekia.games
+# 之后访问http://stock.sekia.games
 ```
 
 ### 6.4 申请 HTTPS 证书
 
 ```bash
-# 国内服务器先切 dnf 源到阿里云镜像，否则默认源（dl.rockylinux.org）极慢/连不上
-# 注：部分阿里云 Rocky 镜像的源文件不叫 Rocky-*.repo，故直接用 *.repo 匹配，不命中的文件自动跳过
-sudo sed -i.bak \
-  -e 's|^mirrorlist=|#mirrorlist=|g' \
-  -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir|baseurl=https://mirrors.aliyun.com/rockylinux|g' \
-  /etc/yum.repos.d/*.repo
-sudo dnf clean all && sudo dnf makecache
+# 1. 安装 acme.sh（装到 /root/.acme.sh）
+curl https://get.acme.sh | sh -s email=hesitia@qq.com
 
-# certbot 不在 Rocky 基础源（AppStream/BaseOS）里，需先启用 EPEL 和 CRB
-sudo dnf config-manager --set-enabled crb
-sudo dnf install -y epel-release
-# EPEL 默认源也在国外，同样切到阿里云镜像
-sudo sed -e 's|^metalink=|#metalink=|g' \
-         -e 's|^#baseurl=https://download.example/pub/epel|baseurl=https://mirrors.aliyun.com/epel|g' \
-         -i.bak /etc/yum.repos.d/epel.repo
-sudo dnf makecache
-sudo dnf install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d stock.sekia.games --redirect \
-  --register-unsafely-without-email --agree-tos --no-eff-email
+# 2. 签发证书（自动用 nginx 的 80 端口校验，自动重载 nginx）
+~/.acme.sh/acme.sh --issue -d stock.sekia.games --nginx --server letsencrypt
+
+# 3. 安装证书到固定路径（续期后自动更新，并自动重载 nginx）
+sudo mkdir -p /etc/nginx/ssl
+
+~/.acme.sh/acme.sh --install-cert -d stock.sekia.games \
+  --key-file /etc/nginx/ssl/stock.sekia.games.key \
+  --fullchain-file /etc/nginx/ssl/stock.sekia.games.pem \
+  --reloadcmd "systemctl reload nginx"
+```
+
+改 nginx 配置：替换原配置，加 443 server 块、80 端口跳转 HTTPS：
+
+```bash
+sudo tee /etc/nginx/conf.d/instock.conf > /dev/null <<'EOF'
+server {
+    listen 80;
+    server_name stock.sekia.games;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name stock.sekia.games;
+
+    ssl_certificate     /etc/nginx/ssl/stock.sekia.games.pem;
+    ssl_certificate_key /etc/nginx/ssl/stock.sekia.games.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:9988;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-certbot 会自动改写配置文件，完成后访问 `https://stock.sekia.games` 即可。
+续期全自动（acme.sh 安装时会自动加 crontab 定时任务），手动续期：`~/.acme.sh/acme.sh --renew-all`。
+
+完成后访问 `https://stock.sekia.games` 即可。

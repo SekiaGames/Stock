@@ -25,7 +25,8 @@ __author__ = 'myh '
 __date__ = '2026/8/6 '
 
 # 盘中行情刷新：高关注度（股息率≥4%，见 instock/config/high_attention_daily.txt）每次后台调度刷新，
-# 非高关注度股票每 _PRICE_REFRESH_POLL_COUNT 次调度刷新一次（首次调度全部刷新，之后5次漏掉非高关注度，依次循环）
+# 非高关注度股票每 _PRICE_REFRESH_POLL_COUNT 次调度刷新一次（首次调度全部刷新，之后5次漏掉非高关注度，依次循环）；
+# 缓存缺失时任何阶段（含周末、盘前）都补齐，周末/盘前取到的即最近交易日收盘价
 _PRICE_REFRESH_MINUTES_HIGH = 5
 _PRICE_REFRESH_POLL_COUNT = 6
 _PRICE_POLL_COUNT_KEY = "price_poll_count"
@@ -37,21 +38,24 @@ _KLINE_REFRESH_ATTEMPTS = {}
 def _stale_price_codes(cached_rows, stock_codes, high_attention_codes, now, refresh_all=False):
     """返回需要刷新现价缓存的代码。
 
-    盘中：高关注度股票每次后台调度都刷新；
+    缓存缺失或现价无效（含初次部署、周末/盘前部署）时任何阶段都补齐，
+    补齐的周末/盘前数据即最近交易日收盘价（腾讯接口周末正常返回）；
+    已有有效缓存时：盘中高关注度股票每次后台调度都刷新，
     非高关注度股票只在 refresh_all（每 _PRICE_REFRESH_POLL_COUNT 次调度一次）时刷新，
-    其余调度仅补齐缓存缺失/现价无效的股票。
-    盘前、周末不刷新；收盘后当日收盘值只更新一次（首次请求时刷新，之后保持）。
+    其余调度不刷新；盘前、周末已有缓存的不刷新；收盘后当日收盘值只更新一次（首次请求时刷新，之后保持）。
     """
     phase = _market_phase(now)
-    if phase not in ("intraday", "after_close"):
-        return []
     fetched_at_by_code = {row["code"]: row.get("fetched_at") for row in cached_rows}
     price_ok_by_code = {row["code"]: (_to_float(row.get("current_price")) or 0) > 0 for row in cached_rows}
     stale = []
     for code in stock_codes:
         fetched_at = fetched_at_by_code.get(code)
+        # 缓存缺失/现价无效：任何阶段（含周末、盘前）都补齐，初次部署首次调度即取到最近交易日收盘价
         if fetched_at is None or not price_ok_by_code.get(code, False):
             stale.append(code)
+            continue
+        if phase not in ("intraday", "after_close"):
+            # 已有有效缓存：盘前、周末/节假日不重复刷新，避免无意义请求
             continue
         if phase == "intraday":
             if code in high_attention_codes:
@@ -167,6 +171,7 @@ def _get_cached_price_rows(db, stock_codes, errors, high_attention_codes=None):
 
     盘中：高关注度每次后台调度刷新，非高关注度每 _PRICE_REFRESH_POLL_COUNT 次调度刷新一次
     （首次调度全部刷新，之后5次漏掉非高关注度，依次循环），调度计数存 settings 表。
+    缓存缺失/现价无效（含周末、盘前初次部署）时任何阶段都补齐最近交易日收盘价。
     high_attention_codes 为当日高关注度股票代码集合（见 high_attention 模块），
     为 None 时按无高关注度处理（全部走每6次调度一档）。
     """
