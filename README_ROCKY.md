@@ -220,3 +220,97 @@ sudo nginx -t && sudo systemctl reload nginx
 续期全自动（acme.sh 安装时会自动加 crontab 定时任务），手动续期：`~/.acme.sh/acme.sh --renew-all`。
 
 完成后访问 `https://stock.sekia.games` 即可。
+
+# 高股息列表-腾讯云-快捷部署版本
+```bash
+
+#能一次跑完的内容
+sudo timedatectl set-timezone Asia/Shanghai;sudo dnf install -y dnf-plugins-core;sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo;sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin;sudo systemctl enable --now docker;sudo dnf install -y git;git clone https://github.com/SekiaGames/Stock $HOME/Stock;mkdir -p "$HOME/instock-mariadb-data";docker network create InStockService;docker run -d --name InStockDbService \
+  --network InStockService \
+  -v "$HOME/instock-mariadb-data:/var/lib/mysql:Z" \
+  -e MARIADB_ROOT_PASSWORD=root \
+  --restart=always \
+  mariadb:latest;docker run -dit --name InStock \
+  --network InStockService \
+  -p 9988:9988 \
+  -v $HOME/Stock:/data/InStock:Z \
+  -e db_host=InStockDbService \
+  --restart=always \
+  mayanghua/instock:latest;docker run -d --name NapCat \
+  --network InStockService \
+  -p 3000:3000 -p 3001:3001 -p 6099:6099 \
+  -e NAPCAT_UID=0 -e NAPCAT_GID=0 \
+  -v "$HOME/napcat-qq:/app/.config/QQ:Z" \
+  -v "$HOME/napcat-config:/app/napcat/config:Z" \
+  --restart=always \
+  mlikiowa/napcat-docker:latest;sudo fallocate -l 2G /swapfile;sudo chmod 600 /swapfile;sudo mkswap /swapfile;sudo swapon /swapfile;echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab;echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-swap.conf;sudo sysctl -p /etc/sysctl.d/99-swap.conf;sudo dnf install -y nginx;sudo systemctl enable --now nginx;
+
+#绑定80端口
+sudo tee /etc/nginx/conf.d/instock.conf > /dev/null <<'EOF'
+server {
+    listen 80;
+    server_name stock.sekia.games;
+
+    location / {
+        proxy_pass http://127.0.0.1:9988;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+
+#申请SSL证书
+curl https://get.acme.sh | sh -s email=hesitia@qq.com;~/.acme.sh/acme.sh --issue -d stock.sekia.games --nginx --server letsencrypt;sudo mkdir -p /etc/nginx/ssl;~/.acme.sh/acme.sh --install-cert -d stock.sekia.games \
+  --key-file /etc/nginx/ssl/stock.sekia.games.key \
+  --fullchain-file /etc/nginx/ssl/stock.sekia.games.pem \
+  --reloadcmd "systemctl reload nginx";
+
+#绑定443端口
+sudo tee /etc/nginx/conf.d/instock.conf > /dev/null <<'EOF'
+server {
+    listen 80;
+    server_name stock.sekia.games;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name stock.sekia.games;
+
+    ssl_certificate     /etc/nginx/ssl/stock.sekia.games.pem;
+    ssl_certificate_key /etc/nginx/ssl/stock.sekia.games.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:9988;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+
+#使443端口生效
+sudo nginx -t && sudo systemctl reload nginx
+
+#获取token
+docker logs --tail 200 NapCat
+
+#登录NapCat后台
+http://<服务器IP>:6099
+
+#添加HTTP服务器（默认设置就行）
+WebUI → 网络配置 → 添加网络 → **HTTP 服务器**：
+- 启动：勾选
+- 名称：随便填
+- Gost：127.0.0.1
+- 端口：3000
+- 消息格式：Array
+- AccessToken：直接用默认值
+
+#开启QQ推送 先改好Q群和Token
+sudo sed -i 's/^enabled=.*/enabled=1/' $HOME/Stock/instock/config/qq_push.conf;sudo sed -i 's/^group_id=.*/group_id=123456789/' $HOME/Stock/instock/config/qq_push.conf;sudo sed -i 's/^token=.*/token=这里填AccessToken/' $HOME/Stock/instock/config/qq_push.conf;docker restart InStock;
+
+```
