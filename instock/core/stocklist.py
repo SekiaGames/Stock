@@ -405,23 +405,22 @@ def compute_liq_daily_series(rows, total_share=None):
 
 
 def compute_liq_series(rows, total_share=None):
-    """流动性积分序列（累加法，0分起算），供个股分析页K线辅助指标绘制。
+    """流动性积分序列（20日滚动累加，0分起算），供个股分析页K线辅助指标绘制。
 
-    rows 为升序 [(trade_date, open, close, high, low, volume), ...]（250根）：
-    前120根只用于计算基准交易量；第121根（索引120）积分 = 0 + 当日，
-    之后逐日累加：积分 = 前日积分 + 当日（流动性当日 = 涨跌幅 × 基准交易量/当日交易量）。
-    返回与 rows 等长的列表，基线不足的日期为 None。
+    每日常数单独计算基准：计算某日（T）积分时，以前第20日（T−20）为积分0，
+    前第19日~今日共20日逐日累加：
+    积分(T) = Σ 当日(T−19 .. T)。
+    流动性当日口径不变（需前120根基准交易量）。窗口内任一日当日值缺失时该日积分为 None。
     """
     daily = compute_liq_daily_series(rows, total_share)
     series = [None] * len(rows)
-    acc = 0.0
     for i in range(len(rows)):
-        if i < 120:
+        if i < 19:
             continue
-        if daily[i] is None:
+        window = daily[i - 19:i + 1]
+        if any(v is None for v in window):
             continue
-        acc += daily[i]
-        series[i] = acc
+        series[i] = sum(window)
     return series
 
 
