@@ -205,14 +205,6 @@
         background: #99E699;
     }
 
-    .high-dividend-table tbody tr td.liq-oversold-cell {
-        background: #FFCCCC;
-    }
-
-    .high-dividend-table tbody tr td.liq-overbought-cell {
-        background: #CCEECC;
-    }
-
     .changed-name {
         color: #b42318;
         font-weight: 600;
@@ -260,7 +252,7 @@
                 <a class="btn-title" href="/instock/lvhi">高股息列表</a>
             </h1>
             <label class="filter-control" title="勾选后隐藏扣非低于-10%的股票">
-                <span>过滤扣非</span>
+                <span>扣非</span>
                 <input id="deductedProfitFilter" type="checkbox" checked>
             </label>
             <label class="filter-control" title="勾选后仅显示已关注的股票">
@@ -274,10 +266,6 @@
             <label class="filter-control" title="市值低于此值的股票将被隐藏（亿元）">
                 <span>最低市值</span>
                 <input id="minMarketCapFilter" type="number" step="1" min="0" placeholder="0" style="width: 62px;">
-            </label>
-            <label class="filter-control" title="息增年不足此值的股票将被隐藏">
-                <span>最低息增年</span>
-                <input id="minDividendGrowthYearsFilter" type="number" step="1" min="0" placeholder="0" style="width: 36px;">
             </label>
             <span class="stock-count-info" id="stockCountInfo" title="过滤后股票数 / 有效股票数（扣除所有屏蔽文件屏蔽后的数量）"></span>
         </div>
@@ -294,7 +282,6 @@
                     <col style="width: 72px;"><!-- 股息率 -->
                     <col style="width: 72px;"><!-- 息增年 -->
                     <col style="width: 88px;"><!-- FCF/股息 -->
-                    <col style="width: 64px;"><!-- 积分 -->
                     <col style="width: 72px;"><!-- MA120 -->
                     <col style="width: 64px;"><!-- 市值 -->
                     <col style="width: 96px;"><!-- 行业 -->
@@ -308,7 +295,6 @@
                         <th class="number-cell sortable-header" data-sort-key="dividend_yield">股息率<i class="fa fa-sort sort-icon"></i></th>
                         <th class="number-cell sortable-header" data-sort-key="dividend_growth_years">息增年<i class="fa fa-sort sort-icon"></i></th>
                         <th class="number-cell sortable-header" data-sort-key="fcf_dividend">FCF/股息<i class="fa fa-sort sort-icon"></i></th>
-                        <th class="number-cell sortable-header" data-sort-key="liq_score">积分<i class="fa fa-sort sort-icon"></i></th>
                         <th class="number-cell sortable-header" data-sort-key="ma120_position">MA120<i class="fa fa-sort sort-icon"></i></th>
                         <th class="number-cell sortable-header" data-sort-key="market_cap">市值<i class="fa fa-sort sort-icon"></i></th>
                         <th class="sortable-header" data-sort-key="industry_name">行业<i class="fa fa-sort sort-icon"></i></th>
@@ -336,7 +322,6 @@
     const WATCH_FILTER_STORAGE_KEY = "highDividendWatchFilterEnabled";
     const MIN_DIVIDEND_YIELD_STORAGE_KEY = "highDividendMinDividendYield";
     const MIN_MARKET_CAP_STORAGE_KEY = "highDividendMinMarketCap";
-    const MIN_DIVIDEND_GROWTH_YEARS_STORAGE_KEY = "highDividendMinDividendGrowthYears";
     const SORT_STORAGE_KEY = "highDividendSortState";
 
     let watchList = [];
@@ -427,9 +412,6 @@
         }
         if (sortState.key === "deducted_profit_growth") {
             return direction * (parseNullableNumber(left.deducted_profit_growth) - parseNullableNumber(right.deducted_profit_growth));
-        }
-        if (sortState.key === "liq_score") {
-            return direction * (parseNullableNumber(left.liq_score) - parseNullableNumber(right.liq_score));
         }
         if (sortState.key === "fcf_dividend") {
             return direction * (parseNullableNumber(left.fcf_dividend) - parseNullableNumber(right.fcf_dividend));
@@ -524,36 +506,6 @@
 
     function fcfDividendTooltipText(row) {
         return fcfSummaryLines(row).join("\n");
-    }
-
-    function liqStateText(score) {
-        if (score === null || score === undefined || Number.isNaN(Number(score))) {
-            return "";
-        }
-        if (score >= 70) {
-            return "超卖";
-        }
-        if (score <= 30) {
-            return "超买";
-        }
-        return "中性";
-    }
-
-    function liqTooltipText(row) {
-        if (!hasKnownValue(row.liq_score)) {
-            return "";
-        }
-        const lines = [];
-        lines.push("流动性积分 " + formatNumber(row.liq_score, 0) + "（" + liqStateText(row.liq_score) + "，>70 超卖，<30 超买，约5日EMA平滑）");
-        lines.push("流动性当日 " + formatNumber(row.liq_daily, 0) + "（积分前当日原始信号）");
-        lines.push("涨跌幅 " + formatSignedPercent(row.liq_price_pos === null || row.liq_price_pos === undefined ? null : row.liq_price_pos * 100)
-            + "（当日涨跌幅，跌幅越大越超卖）");
-        lines.push("量能 " + formatPercent(row.liq_turnover_pct === null || row.liq_turnover_pct === undefined ? null : row.liq_turnover_pct * 100, 0)
-            + "（当日成交量相对120日均量，越低越缩量）");
-        lines.push("20日波动率 " + formatBlankPercent(row.liq_vol20, 2)
-            + (hasKnownValue(row.liq_turnover) ? "、换手率 " + formatBlankPercent(row.liq_turnover, 2) + "（总股本口径）" : ""));
-        lines.push("数据日期 " + (row.liq_trade_date || ""));
-        return lines.join("\n");
     }
 
     // 共用的现价行（股息率、MA120 tooltip 均使用）
@@ -664,16 +616,6 @@
             }
         }
 
-        const minDividendGrowthYears = parseFloat(document.getElementById("minDividendGrowthYearsFilter").value);
-        if (!Number.isNaN(minDividendGrowthYears) && minDividendGrowthYears > 0) {
-            if (row.dividend_growth_years === null || row.dividend_growth_years === undefined || row.dividend_growth_years === "" || Number.isNaN(Number(row.dividend_growth_years))) {
-                return true;
-            }
-            if (Number(row.dividend_growth_years) < minDividendGrowthYears) {
-                return true;
-            }
-        }
-
         return false;
     }
 
@@ -711,11 +653,6 @@
         if (savedMinMarketCap !== null) {
             document.getElementById("minMarketCapFilter").value = savedMinMarketCap;
         }
-
-        const savedMinDividendGrowthYears = window.localStorage.getItem(MIN_DIVIDEND_GROWTH_YEARS_STORAGE_KEY);
-        if (savedMinDividendGrowthYears !== null) {
-            document.getElementById("minDividendGrowthYearsFilter").value = savedMinDividendGrowthYears;
-        }
     }
 
     function saveFilterState() {
@@ -723,13 +660,12 @@
         window.localStorage.setItem(WATCH_FILTER_STORAGE_KEY, String(isWatchFilterEnabled()));
         window.localStorage.setItem(MIN_DIVIDEND_YIELD_STORAGE_KEY, document.getElementById("minDividendYieldFilter").value);
         window.localStorage.setItem(MIN_MARKET_CAP_STORAGE_KEY, document.getElementById("minMarketCapFilter").value);
-        window.localStorage.setItem(MIN_DIVIDEND_GROWTH_YEARS_STORAGE_KEY, document.getElementById("minDividendGrowthYearsFilter").value);
     }
 
     // 可排序列（与表头 data-sort-key 一致）：localStorage 中已删除列（如反弹/回落）的
     // 排序键视为无效，忽略后使用默认排序，避免静默失效
     const SORTABLE_KEYS = ["name", "period_report_published", "deducted_profit_growth",
-        "liq_score", "fcf_dividend", "dividend_growth_years", "ma120_position",
+        "fcf_dividend", "dividend_growth_years", "ma120_position",
         "market_cap", "industry_name"];
 
     function loadSortState() {
@@ -752,7 +688,7 @@
     }
 
     function tableColumnCount() {
-        return reportSeason ? 11 : 10;
+        return reportSeason ? 10 : 9;
     }
 
     // 财报季列：非财报季隐藏整列（列头、列宽、数据单元格由 renderRows 按 reportSeason 控制）
@@ -829,13 +765,6 @@
                 '">',
                 formatBlankPercent(row.fcf_dividend === null || row.fcf_dividend === undefined ? null : row.fcf_dividend * 100, 0),
                 '</td>',
-                '<td class="number-cell liq-cell',
-                hasKnownValue(row.liq_score) && Number(row.liq_score) >= 70 ? ' liq-oversold-cell' : (hasKnownValue(row.liq_score) && Number(row.liq_score) <= 30 ? ' liq-overbought-cell' : ''),
-                '" title="',
-                escapeHtml(liqTooltipText(row)),
-                '">',
-                hasKnownValue(row.liq_score) ? formatBlankNumber(row.liq_score, 0) : '--',
-                '</td>',
                 '<td class="number-cell',
                 row.ma120_signal === 'buy' ? ' ma120-buy-cell' : (row.ma120_signal === 'sell' ? ' ma120-sell-cell' : ''),
                 '" title="',
@@ -890,8 +819,7 @@
             deducted_profit_filter: document.getElementById("deductedProfitFilter").checked ? "1" : "0",
             watch_filter: document.getElementById("watchFilter").checked ? "1" : "0",
             min_dividend_yield: document.getElementById("minDividendYieldFilter").value || "",
-            min_market_cap: document.getElementById("minMarketCapFilter").value || "",
-            min_dividend_growth_years: document.getElementById("minDividendGrowthYearsFilter").value || ""
+            min_market_cap: document.getElementById("minMarketCapFilter").value || ""
         })
             .done(function(payload) {
                 // 服务端配置变更（frontend_refresh_minutes）后更新轮询间隔并重新计时，无需刷新页面
@@ -955,11 +883,6 @@
             scheduleBackendFilterReload();
         });
         $("#minMarketCapFilter").on("change input", function() {
-            saveFilterState();
-            renderRows(highDividendRows);
-            scheduleBackendFilterReload();
-        });
-        $("#minDividendGrowthYearsFilter").on("change input", function() {
             saveFilterState();
             renderRows(highDividendRows);
             scheduleBackendFilterReload();

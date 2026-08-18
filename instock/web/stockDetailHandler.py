@@ -215,6 +215,7 @@ def _build_stock_detail(db, code, now):
         "ma120_trade_date": "" if not ma120_row else _date_text(ma120_row.get("trade_date")),
         "liq_score": None if not liq_row else _to_float(liq_row.get("liq_score")),
         "liq_daily": None if not liq_row else _to_float(liq_row.get("liq_daily")),
+        "liq_base_volume": None if not liq_row else _to_float(liq_row.get("base_volume")),
         "liq_price_pos": None if not liq_row else _to_float(liq_row.get("price_pos")),
         "liq_turnover_pct": None if not liq_row else _to_float(liq_row.get("turnover_pct")),
         "liq_pressure_pct": None if not liq_row else _to_float(liq_row.get("pressure_pct")),

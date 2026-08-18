@@ -369,85 +369,59 @@ def _parse_kline_payload(payload, market, code, today):
     return rows or None
 
 
-def _liq_day_signal(window):
-    """计算一个120日窗口的每日流动性信号（0~100，连续式），返回 dict 或 None。
+def _liq_base_volume(rows):
+    """基准交易量：250根K线中前120根的日均成交量（换手基准）；不足120根返回 None。
 
-    每日信号 = 涨跌幅项 ÷ 换手率项（抛压效率：单位换手率造成的涨跌幅）：
-    - 涨跌幅项 = 当日涨跌幅 ret = 当日收盘/前一日收盘 − 1（下跌为负，跌幅越大越超卖）；
-    - 换手率项 = 换手率比 v = 当日成交量/120日均量（总股本为个股常数，量比=换手率比）；
-    - 效率比 ratio = (−ret) / v：下跌且缩量 → 大正数（抛压被流动性放大，超卖/黄金坑）；
-      上涨且放量 → 负数（超买方向）；
-    - 基线 k = 窗口内 |ret|/v 的均值（个股自身典型效率，自适应波动差异）；
-    - 每日信号 = clamp(50 + 25×ratio/k, 0, 100)，典型波动日≈50±25，中性基准50分。
-    窗口不足120根返回 None。
+    rows 为升序 [(trade_date, open, close, high, low, volume), ...]。
     """
-    if len(window) < 120:
+    if not rows or len(rows) < 120:
         return None
-    volumes = [row[5] for row in window]
-    avg_volume = sum(volumes) / len(volumes)
-    if avg_volume <= 0:
+    volumes = [row[5] for row in rows[:120]]
+    if any(v is None or v <= 0 for v in volumes):
         return None
-    prev_close = window[-2][2]
-    close = window[-1][2]
-    if not prev_close or prev_close <= 0 or close is None:
-        return None
-    ret = close / prev_close - 1
-    vol_ratio = volumes[-1] / avg_volume
-
-    # 基线：窗口内所有交易日的 |ret|/v 均值（首日无涨跌幅跳过）
-    effs = []
-    for i in range(1, len(window)):
-        prev_c = window[i - 1][2]
-        curr_c = window[i][2]
-        vv = volumes[i] / avg_volume
-        if prev_c and prev_c > 0 and curr_c is not None and vv > 0:
-            effs.append(abs(curr_c / prev_c - 1) / vv)
-    k = sum(effs) / len(effs) if effs else 0.02
-
-    if vol_ratio > 0:
-        ratio = (-ret) / vol_ratio
-    else:
-        ratio = 1e9  # 当日零成交 → 缩量到极致，判为深度超卖
-    day_signal = min(max(50 + 25 * (ratio / k), 0.0), 100.0)
-    return {
-        "price_dev": ret,
-        "vol_ratio": vol_ratio,
-        "day_signal": day_signal,
-    }
+    return sum(volumes) / len(volumes)
 
 
-# 积分式平滑系数（当日信号混合权重）：0.2 ≈ 5日EMA记忆，曲线连续平滑、可作买卖点参考
-_LIQ_EMA_ALPHA = 0.2
-# 每日向中性基线50分回归的幅度：信号之外恒有微小向50的拉力，久无新信号时分值缓慢回到中性
-_LIQ_MEAN_REVERSION = 0.02
+def compute_liq_daily_series(rows, total_share=None):
+    """流动性当日序列（积分前的每日原始信号）：当日 = 当日涨跌幅 × (基准交易量/当日交易量) × 100。
+
+    基准交易量 = 250根K线前120根的日均成交量；涨跌幅 = 当日收盘/前一日收盘 − 1。
+    下跌且缩量（基准量/当日量 > 1）→ 负值被放大（抛压被流动性放大，超卖/黄金坑方向）；
+    上涨且放量 → 正值被缩小（超买方向）。首根无涨跌幅或当日无量返回 None。
+    """
+    base = _liq_base_volume(rows)
+    if base is None:
+        return [None] * len(rows)
+    series = [None] * len(rows)
+    prev_close = None
+    for i, row in enumerate(rows):
+        close = row[2]
+        volume = row[5]
+        if prev_close is not None and prev_close > 0 and close is not None and volume and volume > 0:
+            ret = close / prev_close - 1
+            series[i] = ret * (base / volume) * 100
+        prev_close = close
+    return series
 
 
 def compute_liq_series(rows, total_share=None):
-    """计算每日流动性分序列（连续积分式），供个股分析页K线辅助指标绘制。
+    """流动性积分序列（累加法，0分起算），供个股分析页K线辅助指标绘制。
 
-    rows 为升序 [(trade_date, open, close, high, low, volume), ...]；
-    每个交易日取其往前120根为基线（120日均量，不足120根跳过），
-    当日信号（涨跌幅项÷换手率项，见 _liq_day_signal）按 EMA 积分式混合进前一日流动性：
-    LIQ = α×当日信号 + (1−α−γ)×前日LIQ + γ×50，
-    α=0.2（约5日记忆），γ=0.02 为每日向中性基线50分的小幅回归；
-    初值为中性基准50分。返回与 rows 等长的列表，基线不足的日期为 None。
-    不需要总股本（量能比用成交量相对120日均量，总股本为个股常数不影响）。
+    rows 为升序 [(trade_date, open, close, high, low, volume), ...]（250根）：
+    前120根只用于计算基准交易量；第121根（索引120）积分 = 0 + 当日，
+    之后逐日累加：积分 = 前日积分 + 当日（流动性当日 = 涨跌幅 × 基准交易量/当日交易量）。
+    返回与 rows 等长的列表，基线不足的日期为 None。
     """
-    if not rows:
-        return []
+    daily = compute_liq_daily_series(rows, total_share)
     series = [None] * len(rows)
-    liq_prev = 50.0
+    acc = 0.0
     for i in range(len(rows)):
-        window = rows[max(0, i - 119): i + 1]
-        if len(window) < 120:
+        if i < 120:
             continue
-        sig = _liq_day_signal(window)
-        if sig is None:
+        if daily[i] is None:
             continue
-        liq_prev = (_LIQ_EMA_ALPHA * sig["day_signal"]
-                    + (1 - _LIQ_EMA_ALPHA - _LIQ_MEAN_REVERSION) * liq_prev
-                    + _LIQ_MEAN_REVERSION * 50.0)
-        series[i] = liq_prev
+        acc += daily[i]
+        series[i] = acc
     return series
 
 
@@ -469,54 +443,39 @@ def _liq_vol20(rows):
     return (sum((r - mean) ** 2 for r in recent) / len(recent)) ** 0.5 * 100
 
 
-def compute_liq_daily_series(rows):
-    """计算每日流动性当日值序列（积分前的原始每日信号，0~100），供个股分析页K线辅助指标绘制。
-
-    与 compute_liq_series 同口径（120日均量基线 + 涨跌幅项÷换手率项），
-    但不做 EMA 积分，直接返回每日原始信号；基线不足120根的日期为 None。
-    """
-    if not rows:
-        return []
-    series = [None] * len(rows)
-    for i in range(len(rows)):
-        sig = _liq_day_signal(rows[max(0, i - 119): i + 1])
-        if sig is not None:
-            series[i] = sig["day_signal"]
-    return series
-
-
 def compute_liq_oversold(rows, total_share=None):
-    """计算最新一日流动性分（0~100，越高越超卖），返回 dict（含分项）或 None。
+    """计算最新一日流动性积分与当日值，返回 dict（含分项）或 None。
 
-    与 compute_liq_series 同口径：以最近120根为基线（典型抛压效率 k），
-    当日信号（涨跌幅项÷换手率项）按 α=0.2 EMA 积分（流动性积分 liq_score），
-    并返回积分前的当日原始信号 liq_daily（流动性当日）；
-    分项返回涨跌幅 price_pos（当日涨跌幅，负值越大越超卖）
-    与量能比 turnover_pct（当日成交量相对120日均量倍数），供前端tooltip展示。
+    与 compute_liq_series 同口径：前120根基准交易量 + 累加积分；
+    分项返回当日涨跌幅 price_pos 与量能放大比 turnover_pct（基准交易量/当日交易量），
+    供前端tooltip展示。
     """
-    if not rows:
+    if not rows or len(rows) < 121:
         return None
-    window = rows[-120:]
-    if len(window) < 120:
-        return None
-    sig = _liq_day_signal(window)
-    if sig is None:
-        return None
+    daily = compute_liq_daily_series(rows, total_share)
     series = compute_liq_series(rows, total_share)
     last_score = series[-1] if series else None
     if last_score is None:
         return None
+    ret = None
+    if rows[-2][2] and rows[-2][2] > 0 and rows[-1][2] is not None:
+        ret = rows[-1][2] / rows[-2][2] - 1
+    vol_ratio = None
+    if rows[-1][5] and rows[-1][5] > 0:
+        base = _liq_base_volume(rows)
+        vol_ratio = base / rows[-1][5]
     turnover = None
     if total_share:
-        turnover = window[-1][5] * 100 / total_share * 100
+        turnover = rows[-1][5] * 100 / total_share * 100
     return {
-        "trade_date": window[-1][0],
+        "trade_date": rows[-1][0],
         "liq_score": last_score,
-        "liq_daily": sig["day_signal"],
-        "price_pos": sig["price_dev"],
-        "turnover_pct": sig["vol_ratio"],
+        "liq_daily": daily[-1],
+        "base_volume": _liq_base_volume(rows),
+        "price_pos": ret,
+        "turnover_pct": vol_ratio,
         "pressure_pct": None,
-        "vol20": _liq_vol20(window),
+        "vol20": _liq_vol20(rows[-120:]),
         "turnover": turnover,
     }
 

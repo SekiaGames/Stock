@@ -144,6 +144,14 @@
         return fmtNumber(value, 0);
     }
 
+    // 交易量：库中单位为手，按万手显示
+    function fmtWanHands(value) {
+        if (!hasValue(value)) {
+            return "--";
+        }
+        return fmtNumber(Number(value) / 10000, 1) + "万手";
+    }
+
     function fmtSignedPercent(value, digits) {
         if (!hasValue(value)) {
             return "--";
@@ -174,6 +182,7 @@
             { label: "扣非", value: fmtPercent(d.deducted_profit_growth, 1) },
             { label: "FCF/股息", value: hasValue(d.fcf_dividend) ? fmtNumber(Number(d.fcf_dividend) * 100, 0) + "%" : "--" },
             { label: "市值", value: fmtYi(d.market_cap) },
+            { label: "基准交易量", value: fmtWanHands(d.liq_base_volume) },
             { label: "行业", value: d.industry_name || "--" },
         ];
         document.getElementById("stockMetrics").innerHTML = items.map(function(item) {
@@ -218,13 +227,6 @@
                 itemStyle: { color: row.close >= prev ? "#d92d20" : "#067647" }
             };
         });
-        const totalShare = d.total_share;
-        const turnovers = kline.map(function(row) {
-            if (hasValue(row.volume) && hasValue(totalShare) && Number(totalShare) > 0) {
-                return Number(row.volume) * 100 / Number(totalShare) * 100;
-            }
-            return null;
-        });
         const ma120Series = [{
             name: "MA120",
             type: "line",
@@ -257,16 +259,16 @@
                     }
                     const prevClose = i > 0 ? kline[i - 1].close : row.open;
                     const changeRate = prevClose ? (row.close / prevClose - 1) * 100 : null;
-                    const turnover = hasValue(turnovers[i]) ? turnovers[i].toFixed(2) + "%" : "--";
+                    const volumeWan = hasValue(row.volume) ? (Number(row.volume) / 10000).toFixed(1) + "万手" : "--";
                     const liqVal = (d.liq_series || [])[i];
                     const liqDailyVal = (d.liq_daily_series || [])[i];
                     let text = row.date + "<br/>"
                         + "开盘 " + fmtNumber(row.open, 2) + "　收盘 <b>" + fmtNumber(row.close, 2) + "</b><br/>"
                         + "最高 " + fmtNumber(row.high, 2) + "　最低 " + fmtNumber(row.low, 2) + "<br/>"
                         + "涨跌幅 " + (hasValue(changeRate) ? (changeRate >= 0 ? "+" : "") + changeRate.toFixed(2) + "%" : "--")
-                        + "　换手率 " + turnover
-                        + "<br/>流动性积分 " + (hasValue(liqVal) ? Number(liqVal).toFixed(0) : "--")
-                        + "　流动性当日 " + (hasValue(liqDailyVal) ? Number(liqDailyVal).toFixed(0) : "--");
+                        + "　交易量 " + volumeWan
+                        + "<br/>流动性积分 " + (hasValue(liqVal) ? Number(liqVal).toFixed(2) : "--")
+                        + "　流动性当日 " + (hasValue(liqDailyVal) ? Number(liqDailyVal).toFixed(2) : "--");
                     params.forEach(function(p) {
                         if (p.seriesName === "MA120" && hasValue(p.value)) {
                             const maPos = (row.close / Number(p.value) - 1) * 100;
@@ -320,8 +322,7 @@
                 {
                     gridIndex: 0,
                     position: "right",
-                    min: 0,
-                    max: 100,
+                    scale: true,
                     splitNumber: 2,
                     axisLabel: { color: "#2563eb", fontSize: 10 },
                     splitLine: { show: false }

@@ -98,10 +98,9 @@ def _filter_rows_for_frontend(rows, get_argument):
 
     min_dividend_yield = _parse_positive_float("min_dividend_yield")
     min_market_cap = _parse_positive_float("min_market_cap")
-    min_dividend_growth_years = _parse_positive_float("min_dividend_growth_years")
     deducted_profit_filter = _parse_bool("deducted_profit_filter")
     watch_filter = _parse_bool("watch_filter")
-    if not any((min_dividend_yield, min_market_cap, min_dividend_growth_years,
+    if not any((min_dividend_yield, min_market_cap,
                 deducted_profit_filter, watch_filter)):
         return rows
     follow_codes = set(followlist.get_follow_codes()) if watch_filter else None
@@ -121,10 +120,6 @@ def _filter_rows_for_frontend(rows, get_argument):
         # 最低市值（亿元）：市值未知（未抓取）或低于阈值均隐藏
         if min_market_cap is not None and (row.get("market_cap") is None
                                            or row["market_cap"] < min_market_cap):
-            continue
-        # 最低息增年：息增年未知或低于阈值均隐藏
-        if min_dividend_growth_years is not None and (row.get("dividend_growth_years") is None
-                                                      or row["dividend_growth_years"] < min_dividend_growth_years):
             continue
         filtered.append(row)
     return filtered
