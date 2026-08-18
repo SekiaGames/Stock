@@ -370,14 +370,15 @@ def _parse_kline_payload(payload, market, code, today):
 
 
 def _liq_base_volume_for_day(rows, i):
-    """某日（索引 i）的基准交易量：该日前120日（i−120 .. i−1，不含当日）日均成交量。
+    """某日（索引 i）的基准交易量：含当日在内前120日（i−119 .. i，共120根）日均成交量。
 
+    与 MA120 同窗口口径（120根含当日），第120根（索引119）起可用；
     rows 为升序 [(trade_date, open, close, high, low, volume), ...]；
     前120日不足或含无效成交量返回 None。
     """
-    if i < 120 or not rows or len(rows) < 120:
+    if not rows or len(rows) < 120 or i < 119:
         return None
-    volumes = [row[5] for row in rows[i - 120:i]]
+    volumes = [row[5] for row in rows[i - 119:i + 1]]
     if any(v is None or v <= 0 for v in volumes):
         return None
     return sum(volumes) / len(volumes)
@@ -411,16 +412,18 @@ def compute_liq_series(rows, total_share=None):
     """流动性积分序列（20日滚动累加，0分起算），供个股分析页K线辅助指标绘制。
 
     每日常数单独计算基准：计算某日（T）积分时，以前第20日（T−20）为积分0，
-    前第19日~今日共20日逐日累加：
-    积分(T) = Σ 当日(T−19 .. T)。
-    流动性当日口径不变（需前120根基准交易量）。窗口内任一日当日值缺失时该日积分为 None。
+    前第19日~今日共20日逐日累加：积分(T) = Σ 当日(T−19 .. T)。
+    当日值自第120根（索引119，与MA120同起点）可用起即开始累加，
+    前19日为部分累加，满20日后为完整窗口；窗口内任一日当日值缺失时该日积分为 None。
+    流动性当日口径不变（基准交易量含当日）。
     """
     daily = compute_liq_daily_series(rows, total_share)
     series = [None] * len(rows)
     for i in range(len(rows)):
-        if i < 19:
+        if i < 119:
             continue
-        window = daily[i - 19:i + 1]
+        start = max(119, i - 19)
+        window = daily[start:i + 1]
         if any(v is None for v in window):
             continue
         series[i] = sum(window)
