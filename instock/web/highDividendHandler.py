@@ -26,6 +26,7 @@ from instock.core.market_quotes import (
     _read_price_cache,
     _read_ma120_cache,
     _read_recent_kline_closes,
+    _read_liq_cache_batch,
     _is_ma120_cache_stale,
     _recent_pre_close,
     _ma120_trade_signal,
@@ -215,9 +216,11 @@ def _refresh_pipeline(db, now, refresh):
     if blocked_zero_growth_codes:
         stock_codes = [code for code in stock_codes if code not in blocked_zero_growth_codes]
     ma120_by_code = _read_ma120_cache(db, stock_codes)
+    liq_by_code = _read_liq_cache_batch(db, stock_codes)
     stale_ma120_codes = [
         code for code in stock_codes
         if _is_ma120_cache_stale(ma120_by_code.get(code), now)
+        or _is_ma120_cache_stale(liq_by_code.get(code), now)
     ]
     # 行业只抓一次不刷新；市值每周刷新
     stale_industry_codes = [
@@ -347,22 +350,16 @@ def _refresh_pipeline(db, now, refresh):
         ma120_position = None if not ma120_row else _to_float(ma120_row.get("ma120_position"))
         narrow_fcf = fcf_data.get("narrow_fcf")
         fcf_dividend = None
-        fcf_price = None
         if narrow_fcf is not None:
             if dividend_per_share > 0:
                 fcf_dividend = narrow_fcf / dividend_per_share
-            if current_price and current_price > 0:
-                fcf_price = narrow_fcf / current_price * 100
         elif fcf_data.get("narrow_fcf_skipped"):
-            # 金融行业不适用窄口径FCF：用稀释每股收益替代
-            # （收益/每股派息 = 派息覆盖率，收益/现价 = 盈利收益率）
+            # 金融行业不适用窄口径FCF：用稀释每股收益替代（收益/每股派息 = 派息覆盖率）
             eps = finance_report.get("diluted_eps")
-            if eps is not None and eps > 0:
-                if dividend_per_share > 0:
-                    fcf_dividend = eps / dividend_per_share
-                if current_price and current_price > 0:
-                    fcf_price = eps / current_price * 100
+            if eps is not None and eps > 0 and dividend_per_share > 0:
+                fcf_dividend = eps / dividend_per_share
         name = stock_names.get(code, "")
+        liq_row = liq_by_code.get(code, {})
 
         row = {
             "code": code,
@@ -400,7 +397,16 @@ def _refresh_pipeline(db, now, refresh):
             "narrow_fcf_skipped": fcf_data.get("narrow_fcf_skipped", False),
             "narrow_fcf_skip_reason": fcf_data.get("narrow_fcf_skip_reason", ""),
             "fcf_dividend": fcf_dividend,
-            "fcf_price": fcf_price,
+            "liq_trade_date": "" if not liq_row else _date_text(liq_row.get("trade_date")),
+            "liq_time": "" if not liq_row else (
+                liq_row["fetched_at"].strftime("%m-%d %H:%M:%S")
+                if hasattr(liq_row.get("fetched_at"), "strftime") else str(liq_row.get("fetched_at") or "")[5:19]),
+            "liq_score": None if not liq_row else _to_float(liq_row.get("liq_score")),
+            "liq_price_pos": None if not liq_row else _to_float(liq_row.get("price_pos")),
+            "liq_turnover_pct": None if not liq_row else _to_float(liq_row.get("turnover_pct")),
+            "liq_pressure_pct": None if not liq_row else _to_float(liq_row.get("pressure_pct")),
+            "liq_vol20": None if not liq_row else _to_float(liq_row.get("vol20")),
+            "liq_turnover": None if not liq_row else _to_float(liq_row.get("turnover")),
             "ma120_trade_date": "" if not ma120_row else _date_text(ma120_row.get("trade_date")),
             "ma120_time": "" if not ma120_row else (
                 ma120_row["fetched_at"].strftime("%H:%M:%S")
@@ -537,6 +543,7 @@ class HighDividendDataHandler(webBase.BaseHandler):
                 "price": "后台调度每次刷新高关注度（股息率≥4%），其余每6次调度刷新一次，盘后保持收盘价",
                 "profile": "页面请求只读缓存；行业只抓一次不刷新，市值取每周最后一个交易日收盘数据、周五收盘后刷新，无缓存立即抓取",
                 "ma120": "页面请求只读缓存；盘中可刷新（使用前一交易日收盘数据），下午3点后刷新当日收盘数据",
+                "liq": "流动性指标随K线刷新同步计算：近120日窗口的价格分位、换手率分位、抛压效率分位（总股本口径换手率）",
                 "dividend_history": "页面请求只读缓存；交易日每天8点后检查一次，16点至23点最多每4小时复查一次",
                 "finance_report": "页面请求只读缓存；交易日每天8点后检查一次，16点至23点最多每4小时复查一次",
                 "cashflow": "页面请求只读缓存；窄口径FCF取最新季报（与扣非同报告期），金融行业不抓取；年报季交易日检查，非年报季最多7天一次",

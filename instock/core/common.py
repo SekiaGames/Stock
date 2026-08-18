@@ -27,6 +27,8 @@ _FINANCE_REPORT_CACHE_TABLE = "cn_high_dividend_finance_report_cache"
 _CASHFLOW_CACHE_TABLE = "cn_high_dividend_cashflow_cache"
 _MA120_CACHE_TABLE = "cn_high_dividend_ma120_cache"
 _KLINE_CACHE_TABLE = "cn_high_dividend_kline_cache"
+_DETAIL_KLINE_CACHE_TABLE = "cn_high_dividend_detail_kline_cache"
+_LIQ_CACHE_TABLE = "cn_high_dividend_liq_cache"
 _PROFILE_CACHE_TABLE = "cn_high_dividend_profile_cache"
 _SETTINGS_TABLE = "cn_high_dividend_settings"
 _FISCAL_YEAR_BASE_KEY = "fiscal_year_base"
@@ -212,12 +214,44 @@ def _ensure_cache_tables(db):
             CREATE TABLE IF NOT EXISTS `{_KLINE_CACHE_TABLE}` (
                 `code` varchar(6) NOT NULL,
                 `trade_date` date NOT NULL,
+                `open_price` decimal(12,4) DEFAULT NULL,
                 `close_price` decimal(12,4) DEFAULT NULL,
                 `high_price` decimal(12,4) DEFAULT NULL,
                 `low_price` decimal(12,4) DEFAULT NULL,
+                `volume` decimal(20,2) DEFAULT NULL,
                 PRIMARY KEY (`code`, `trade_date`)
             ) CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
         """)
+        db.execute(f"ALTER TABLE `{_KLINE_CACHE_TABLE}` ADD COLUMN IF NOT EXISTS `open_price` decimal(12,4) DEFAULT NULL")
+        db.execute(f"ALTER TABLE `{_KLINE_CACHE_TABLE}` ADD COLUMN IF NOT EXISTS `volume` decimal(20,2) DEFAULT NULL")
+        db.execute(f"""
+            CREATE TABLE IF NOT EXISTS `{_DETAIL_KLINE_CACHE_TABLE}` (
+                `code` varchar(6) NOT NULL,
+                `trade_date` date NOT NULL,
+                `open_price` decimal(12,4) DEFAULT NULL,
+                `close_price` decimal(12,4) DEFAULT NULL,
+                `high_price` decimal(12,4) DEFAULT NULL,
+                `low_price` decimal(12,4) DEFAULT NULL,
+                `volume` decimal(20,2) DEFAULT NULL,
+                PRIMARY KEY (`code`, `trade_date`)
+            ) CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
+        """)
+        db.execute(f"""
+            CREATE TABLE IF NOT EXISTS `{_LIQ_CACHE_TABLE}` (
+                `code` varchar(6) NOT NULL,
+                `trade_date` date DEFAULT NULL,
+                `liq_score` decimal(8,4) DEFAULT NULL,
+                `price_pos` decimal(8,4) DEFAULT NULL,
+                `turnover_pct` decimal(8,4) DEFAULT NULL,
+                `pressure_pct` decimal(8,4) DEFAULT NULL,
+                `vol20` decimal(8,4) DEFAULT NULL,
+                `turnover` decimal(12,4) DEFAULT NULL,
+                `fetched_at` datetime NOT NULL,
+                PRIMARY KEY (`code`),
+                INDEX `idx_fetched_at` (`fetched_at`)
+            ) CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = Dynamic;
+        """)
+        db.execute(f"ALTER TABLE `{_LIQ_CACHE_TABLE}` ADD COLUMN IF NOT EXISTS `liq_daily` decimal(8,4) DEFAULT NULL")
         db.execute(f"""
             CREATE TABLE IF NOT EXISTS `{_SETTINGS_TABLE}` (
                 `setting_key` varchar(50) NOT NULL,

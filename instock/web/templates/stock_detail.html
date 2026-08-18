@@ -1,0 +1,423 @@
+{% extends "layout/default.html" %}
+
+{% block main_content %}
+<style>
+    .stock-page {
+        min-height: 100%;
+        background: #f6f8fb;
+        color: #1f2937;
+        padding: 18px 22px;
+    }
+
+    .stock-header {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+
+    .stock-title {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 600;
+    }
+
+    .stock-title .stock-code {
+        color: #667085;
+        font-size: 15px;
+        font-weight: 400;
+        margin-left: 8px;
+        text-decoration: none;
+    }
+
+    .stock-title .stock-code:hover {
+        color: #2563eb;
+        text-decoration: underline;
+    }
+
+    .btn-title {
+        background: #2563eb;
+        border: none;
+        border-radius: 3px;
+        color: #fff;
+        cursor: pointer;
+        display: inline-block;
+        font-size: 15px;
+        line-height: 30px;
+        padding: 0 16px;
+        text-decoration: none;
+    }
+
+    .btn-title:hover {
+        background: #1d4ed8;
+        text-decoration: none;
+    }
+
+    .stock-metrics {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 22px;
+        margin-bottom: 14px;
+    }
+
+    .metric-item {
+        font-size: 13px;
+        white-space: nowrap;
+    }
+
+    .metric-label {
+        color: #667085;
+        font-size: 12px;
+        margin-right: 4px;
+    }
+
+    .metric-value {
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+    }
+
+    .price-main {
+        font-size: 20px;
+    }
+
+    .rise {
+        color: #d92d20;
+    }
+
+    .fall {
+        color: #067647;
+    }
+
+    .chart-shell {
+        background: #fff;
+        border: 1px solid #cfd6e4;
+        border-radius: 4px;
+        padding: 14px 16px;
+    }
+
+    .chart-empty {
+        color: #667085;
+        padding: 60px;
+        text-align: center;
+    }
+
+    #klineChart {
+        height: 560px;
+        width: 100%;
+    }
+</style>
+
+<div class="stock-page">
+    <div class="stock-header">
+        <h2 class="stock-title"><span id="stockName">个股分析</span><a class="stock-code" id="stockCode" href="https://xueqiu.com/S/{{ 'SH' if code.startswith('6') else 'SZ' }}{{ code }}" target="_blank" rel="noopener noreferrer">{{ code }}</a></h2>
+        <a class="btn-title" href="/instock/high_dividend">返回高股息列表</a>
+    </div>
+    <div class="stock-metrics" id="stockMetrics"></div>
+    <div class="chart-shell">
+        <div id="klineChart"></div>
+    </div>
+</div>
+
+<script src="/static/js/echarts.min.js"></script>
+<script type="text/javascript">
+    let klineChart = null;
+    let chartData = null;
+    let pageRefreshTimer = null;
+    const pageRefreshIntervalMs = 60 * 1000;
+
+    function hasValue(value) {
+        return value !== null && value !== undefined && value !== "" && !Number.isNaN(Number(value));
+    }
+
+    function fmtNumber(value, digits) {
+        if (!hasValue(value)) {
+            return "--";
+        }
+        return Number(value).toFixed(digits);
+    }
+
+    // 市值：库中单位即亿（与高股息列表一致，整数显示）
+    function fmtYi(value) {
+        return fmtNumber(value, 0);
+    }
+
+    function fmtSignedPercent(value, digits) {
+        if (!hasValue(value)) {
+            return "--";
+        }
+        const number = Number(value);
+        return (number > 0 ? "+" : "") + number.toFixed(digits) + "%";
+    }
+
+    function fmtPercent(value, digits) {
+        if (!hasValue(value)) {
+            return "--";
+        }
+        return Number(value).toFixed(digits) + "%";
+    }
+
+    function renderMetrics(d) {
+        const price = d.current_price;
+        const change = d.change_rate;
+        const priceHtml = hasValue(price)
+            ? '<span class="metric-value price-main ' + (hasValue(change) && Number(change) >= 0 ? "rise" : "fall") + '">'
+                + fmtNumber(price, 2) + ' ' + fmtSignedPercent(change, 2) + '</span>'
+            : '<span class="metric-value price-main">--</span>';
+        const items = [
+            { label: "现价", html: priceHtml },
+            { label: "股息率", value: fmtPercent(d.dividend_yield, 1) },
+            { label: "息增年", value: fmtNumber(d.dividend_growth_years, 0) },
+            { label: "季报", value: d.report_quarter || "--" },
+            { label: "扣非", value: fmtPercent(d.deducted_profit_growth, 1) },
+            { label: "FCF/股息", value: hasValue(d.fcf_dividend) ? fmtNumber(Number(d.fcf_dividend) * 100, 0) + "%" : "--" },
+            { label: "市值", value: fmtYi(d.market_cap) },
+            { label: "行业", value: d.industry_name || "--" },
+        ];
+        document.getElementById("stockMetrics").innerHTML = items.map(function(item) {
+            return '<span class="metric-item"><span class="metric-label">' + item.label + '</span><span class="metric-value">'
+                + (item.html || item.value) + '</span></span>';
+        }).join("");
+    }
+
+    function movingAverage(closes, period) {
+        const result = [];
+        let sum = 0;
+        for (let i = 0; i < closes.length; i++) {
+            sum += closes[i];
+            if (i >= period) {
+                sum -= closes[i - period];
+            }
+            result.push(i >= period - 1 ? sum / period : null);
+        }
+        return result;
+    }
+
+    function renderChart(d) {
+        const container = document.getElementById("klineChart");
+        const kline = d.kline || [];
+        if (kline.length < 2) {
+            if (klineChart) {
+                klineChart.dispose();
+                klineChart = null;
+            }
+            container.innerHTML = '<div class="chart-empty">该股票K线数据不足</div>';
+            return;
+        }
+        const dates = kline.map(function(row) { return row.date; });
+        const candles = kline.map(function(row) {
+            return [row.open, row.close, row.low, row.high];
+        });
+        const closes = kline.map(function(row) { return row.close; });
+        const volumes = kline.map(function(row, index) {
+            const prev = index > 0 ? kline[index - 1].close : row.open;
+            return {
+                value: row.volume,
+                itemStyle: { color: row.close >= prev ? "#d92d20" : "#067647" }
+            };
+        });
+        const totalShare = d.total_share;
+        const turnovers = kline.map(function(row) {
+            if (hasValue(row.volume) && hasValue(totalShare) && Number(totalShare) > 0) {
+                return Number(row.volume) * 100 / Number(totalShare) * 100;
+            }
+            return null;
+        });
+        const ma120Series = [{
+            name: "MA120",
+            type: "line",
+            data: movingAverage(closes, 120),
+            smooth: true,
+            showSymbol: false,
+            lineStyle: { width: 1, color: "#f97316" }
+        }];
+
+        const prevZoom = klineChart ? klineChart.getOption().dataZoom : null;
+        const option = {
+            animation: false,
+            legend: {
+                data: ["K线"].concat(ma120Series.map(function(s) { return s.name; }), ["成交量", "流动性积分"]),
+                top: 4,
+                left: 8,
+                itemWidth: 14,
+                itemHeight: 8,
+                textStyle: { fontSize: 12 }
+            },
+            tooltip: {
+                trigger: "axis",
+                axisPointer: { type: "cross" },
+                confine: true,
+                formatter: function(params) {
+                    const i = params[0].dataIndex;
+                    const row = kline[i];
+                    if (!row) {
+                        return "";
+                    }
+                    const prevClose = i > 0 ? kline[i - 1].close : row.open;
+                    const changeRate = prevClose ? (row.close / prevClose - 1) * 100 : null;
+                    const turnover = hasValue(turnovers[i]) ? turnovers[i].toFixed(2) + "%" : "--";
+                    const liqVal = (d.liq_series || [])[i];
+                    const liqDailyVal = (d.liq_daily_series || [])[i];
+                    let text = row.date + "<br/>"
+                        + "开盘 " + fmtNumber(row.open, 2) + "　收盘 <b>" + fmtNumber(row.close, 2) + "</b><br/>"
+                        + "最高 " + fmtNumber(row.high, 2) + "　最低 " + fmtNumber(row.low, 2) + "<br/>"
+                        + "涨跌幅 " + (hasValue(changeRate) ? (changeRate >= 0 ? "+" : "") + changeRate.toFixed(2) + "%" : "--")
+                        + "　换手率 " + turnover
+                        + "<br/>流动性积分 " + (hasValue(liqVal) ? Number(liqVal).toFixed(0) : "--")
+                        + "　流动性当日 " + (hasValue(liqDailyVal) ? Number(liqDailyVal).toFixed(0) : "--");
+                    params.forEach(function(p) {
+                        if (p.seriesName === "MA120" && hasValue(p.value)) {
+                            const maPos = (row.close / Number(p.value) - 1) * 100;
+                            text += "<br/>MA120位置 " + (maPos >= 0 ? "+" : "") + maPos.toFixed(1) + "%";
+                        }
+                    });
+                    return text;
+                }
+            },
+            axisPointer: { link: [{ xAxisIndex: "all" }] },
+            grid: [
+                { left: 56, right: 58, top: 34, height: "58%" },
+                { left: 56, right: 58, top: "74%", height: "16%" }
+            ],
+            xAxis: [
+                {
+                    type: "category",
+                    data: dates,
+                    boundaryGap: true,
+                    axisLine: { lineStyle: { color: "#cfd6e4" } },
+                    axisLabel: { show: false },
+                    splitLine: { show: false },
+                    min: "dataMin",
+                    max: "dataMax"
+                },
+                {
+                    type: "category",
+                    gridIndex: 1,
+                    data: dates,
+                    boundaryGap: true,
+                    axisLine: { lineStyle: { color: "#cfd6e4" } },
+                    axisLabel: { color: "#667085", fontSize: 11 },
+                    splitLine: { show: false },
+                    min: "dataMin",
+                    max: "dataMax"
+                }
+            ],
+            yAxis: [
+                {
+                    scale: true,
+                    splitLine: { lineStyle: { color: "#eef2f7" } },
+                    axisLabel: { color: "#667085", fontSize: 11 }
+                },
+                {
+                    gridIndex: 1,
+                    scale: true,
+                    splitNumber: 2,
+                    axisLabel: { show: false },
+                    splitLine: { show: false }
+                },
+                {
+                    gridIndex: 0,
+                    position: "right",
+                    min: 0,
+                    max: 100,
+                    splitNumber: 2,
+                    axisLabel: { color: "#2563eb", fontSize: 10 },
+                    splitLine: { show: false }
+                }
+            ],
+            dataZoom: [
+                { type: "inside", xAxisIndex: [0, 1], start: 0, end: 100 },
+                {
+                    type: "slider",
+                    xAxisIndex: [0, 1],
+                    bottom: 2,
+                    height: 18,
+                    start: 0,
+                    end: 100,
+                    borderColor: "#cfd6e4",
+                    fillerColor: "rgba(37,99,235,0.15)",
+                    handleStyle: { color: "#2563eb" },
+                    textStyle: { fontSize: 10 }
+                }
+            ],
+            series: [{
+                name: "K线",
+                type: "candlestick",
+                data: candles,
+                itemStyle: {
+                    color: "#d92d20",
+                    color0: "#067647",
+                    borderColor: "#d92d20",
+                    borderColor0: "#067647"
+                }
+            }].concat(ma120Series, [{
+                name: "成交量",
+                type: "bar",
+                xAxisIndex: 1,
+                yAxisIndex: 1,
+                data: volumes,
+                barWidth: "60%"
+            }, {
+                name: "流动性积分",
+                type: "line",
+                xAxisIndex: 0,
+                yAxisIndex: 2,
+                data: d.liq_series || [],
+                showSymbol: false,
+                smooth: true,
+                lineStyle: { width: 1.5, color: "#2563eb" }
+            }])
+        };
+
+        if (!klineChart) {
+            klineChart = echarts.init(container);
+            window.addEventListener("resize", function() { klineChart && klineChart.resize(); });
+        }
+        // 每60秒静默刷新时保留用户缩放位置
+        if (prevZoom && prevZoom.length) {
+            option.dataZoom.forEach(function(dz, idx) {
+                if (prevZoom[idx] && hasValue(prevZoom[idx].start)) {
+                    dz.start = prevZoom[idx].start;
+                    dz.end = prevZoom[idx].end;
+                }
+            });
+        }
+        klineChart.setOption(option, true);
+    }
+
+    function loadStockDetail() {
+        const code = document.getElementById("stockCode").textContent;
+        if (!code) {
+            return;
+        }
+        $.getJSON("/instock/stock/api", { code: code })
+            .done(function(d) {
+                if (d.error) {
+                    document.getElementById("stockMetrics").innerHTML =
+                        '<span class="metric-item">' + d.error + '</span>';
+                    return;
+                }
+                document.title = d.name + " " + d.code + " - InStock股票系统";
+                document.getElementById("stockName").textContent = d.name;
+                document.getElementById("stockCode").textContent = d.code;
+                chartData = d;
+                renderMetrics(d);
+                renderChart(d);
+            })
+            .fail(function() {
+                // 静默失败，保留现有数据
+            });
+    }
+
+    $(document).ready(function() {
+        const code = "{{ code }}";
+        document.getElementById("stockCode").textContent = code;
+        loadStockDetail();
+        pageRefreshTimer = window.setInterval(function() {
+            loadStockDetail();
+        }, pageRefreshIntervalMs);
+    });
+</script>
+{% end %}

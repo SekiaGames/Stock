@@ -301,11 +301,12 @@ def _parse_quote_lines(text, date):
 
 
 def fetch_daily_kline_rows(code, today=None, count=125):
-    """请求前复权日K，返回升序 [(trade_date, close, high, low), ...]。
+    """请求前复权日K，返回升序 [(trade_date, open, close, high, low, volume), ...]。
 
     腾讯K线API返回前复权（qfq）日线数据，
     确保MA120计算时历史价格已就除权除息进行调整，
     与主流股票APP的MA120数值一致。
+    volume 为成交量（手），供换手率类指标计算。
     count 为请求根数：默认125（= 120根MA120 + 盘中排除当日未完成K线1根 + 少量容错余量），
     扩展根数（320/640/1024）用于组合净值回溯等需要更长历史的场景；
     扩展根数请求失败（超时/被拒）时自动降级为默认125根重试一次。
@@ -338,7 +339,7 @@ def fetch_daily_kline_rows(code, today=None, count=125):
 
 
 def _parse_kline_payload(payload, market, code, today):
-    """解析腾讯K线接口返回为升序 [(trade_date, close, high, low), ...]。"""
+    """解析腾讯K线接口返回为升序 [(trade_date, open, close, high, low, volume), ...]。"""
     stock_data = payload.get("data", {}).get(f"{market}{code}")
     if not stock_data:
         return None
@@ -352,18 +353,172 @@ def _parse_kline_payload(payload, market, code, today):
 
     rows = []
     for item in klines:
-        if len(item) < 5:
+        if len(item) < 6:
             continue
         # item format: [date, open, close, high, low, volume, ...]
+        open_price = _to_float(item[1])
         close_price = _to_float(item[2])
         if close_price is None or close_price <= 0:
             continue
         trade_date = str(item[0])[:10]
         if not trade_date:
             continue
-        rows.append((trade_date, close_price, _to_float(item[3]), _to_float(item[4])))
+        rows.append((trade_date, open_price, close_price,
+                     _to_float(item[3]), _to_float(item[4]), _to_float(item[5])))
 
     return rows or None
+
+
+def _liq_day_signal(window):
+    """计算一个120日窗口的每日流动性信号（0~100，连续式），返回 dict 或 None。
+
+    每日信号 = 涨跌幅项 ÷ 换手率项（抛压效率：单位换手率造成的涨跌幅）：
+    - 涨跌幅项 = 当日涨跌幅 ret = 当日收盘/前一日收盘 − 1（下跌为负，跌幅越大越超卖）；
+    - 换手率项 = 换手率比 v = 当日成交量/120日均量（总股本为个股常数，量比=换手率比）；
+    - 效率比 ratio = (−ret) / v：下跌且缩量 → 大正数（抛压被流动性放大，超卖/黄金坑）；
+      上涨且放量 → 负数（超买方向）；
+    - 基线 k = 窗口内 |ret|/v 的均值（个股自身典型效率，自适应波动差异）；
+    - 每日信号 = clamp(50 + 25×ratio/k, 0, 100)，典型波动日≈50±25，中性基准50分。
+    窗口不足120根返回 None。
+    """
+    if len(window) < 120:
+        return None
+    volumes = [row[5] for row in window]
+    avg_volume = sum(volumes) / len(volumes)
+    if avg_volume <= 0:
+        return None
+    prev_close = window[-2][2]
+    close = window[-1][2]
+    if not prev_close or prev_close <= 0 or close is None:
+        return None
+    ret = close / prev_close - 1
+    vol_ratio = volumes[-1] / avg_volume
+
+    # 基线：窗口内所有交易日的 |ret|/v 均值（首日无涨跌幅跳过）
+    effs = []
+    for i in range(1, len(window)):
+        prev_c = window[i - 1][2]
+        curr_c = window[i][2]
+        vv = volumes[i] / avg_volume
+        if prev_c and prev_c > 0 and curr_c is not None and vv > 0:
+            effs.append(abs(curr_c / prev_c - 1) / vv)
+    k = sum(effs) / len(effs) if effs else 0.02
+
+    if vol_ratio > 0:
+        ratio = (-ret) / vol_ratio
+    else:
+        ratio = 1e9  # 当日零成交 → 缩量到极致，判为深度超卖
+    day_signal = min(max(50 + 25 * (ratio / k), 0.0), 100.0)
+    return {
+        "price_dev": ret,
+        "vol_ratio": vol_ratio,
+        "day_signal": day_signal,
+    }
+
+
+# 积分式平滑系数（当日信号混合权重）：0.2 ≈ 5日EMA记忆，曲线连续平滑、可作买卖点参考
+_LIQ_EMA_ALPHA = 0.2
+# 每日向中性基线50分回归的幅度：信号之外恒有微小向50的拉力，久无新信号时分值缓慢回到中性
+_LIQ_MEAN_REVERSION = 0.02
+
+
+def compute_liq_series(rows, total_share=None):
+    """计算每日流动性分序列（连续积分式），供个股分析页K线辅助指标绘制。
+
+    rows 为升序 [(trade_date, open, close, high, low, volume), ...]；
+    每个交易日取其往前120根为基线（120日均量，不足120根跳过），
+    当日信号（涨跌幅项÷换手率项，见 _liq_day_signal）按 EMA 积分式混合进前一日流动性：
+    LIQ = α×当日信号 + (1−α−γ)×前日LIQ + γ×50，
+    α=0.2（约5日记忆），γ=0.02 为每日向中性基线50分的小幅回归；
+    初值为中性基准50分。返回与 rows 等长的列表，基线不足的日期为 None。
+    不需要总股本（量能比用成交量相对120日均量，总股本为个股常数不影响）。
+    """
+    if not rows:
+        return []
+    series = [None] * len(rows)
+    liq_prev = 50.0
+    for i in range(len(rows)):
+        window = rows[max(0, i - 119): i + 1]
+        if len(window) < 120:
+            continue
+        sig = _liq_day_signal(window)
+        if sig is None:
+            continue
+        liq_prev = (_LIQ_EMA_ALPHA * sig["day_signal"]
+                    + (1 - _LIQ_EMA_ALPHA - _LIQ_MEAN_REVERSION) * liq_prev
+                    + _LIQ_MEAN_REVERSION * 50.0)
+        series[i] = liq_prev
+    return series
+
+
+def _liq_vol20(rows):
+    """近20日收益率标准差（%），供流动性指标tooltip显示波动环境。"""
+    if len(rows) < 20:
+        return None
+    daily_rets = []
+    prev_close = None
+    for row in rows:
+        close = row[2]
+        if prev_close is not None and prev_close > 0 and close is not None:
+            daily_rets.append(close / prev_close - 1)
+        prev_close = close
+    if len(daily_rets) < 20:
+        return None
+    recent = daily_rets[-20:]
+    mean = sum(recent) / len(recent)
+    return (sum((r - mean) ** 2 for r in recent) / len(recent)) ** 0.5 * 100
+
+
+def compute_liq_daily_series(rows):
+    """计算每日流动性当日值序列（积分前的原始每日信号，0~100），供个股分析页K线辅助指标绘制。
+
+    与 compute_liq_series 同口径（120日均量基线 + 涨跌幅项÷换手率项），
+    但不做 EMA 积分，直接返回每日原始信号；基线不足120根的日期为 None。
+    """
+    if not rows:
+        return []
+    series = [None] * len(rows)
+    for i in range(len(rows)):
+        sig = _liq_day_signal(rows[max(0, i - 119): i + 1])
+        if sig is not None:
+            series[i] = sig["day_signal"]
+    return series
+
+
+def compute_liq_oversold(rows, total_share=None):
+    """计算最新一日流动性分（0~100，越高越超卖），返回 dict（含分项）或 None。
+
+    与 compute_liq_series 同口径：以最近120根为基线（典型抛压效率 k），
+    当日信号（涨跌幅项÷换手率项）按 α=0.2 EMA 积分（流动性积分 liq_score），
+    并返回积分前的当日原始信号 liq_daily（流动性当日）；
+    分项返回涨跌幅 price_pos（当日涨跌幅，负值越大越超卖）
+    与量能比 turnover_pct（当日成交量相对120日均量倍数），供前端tooltip展示。
+    """
+    if not rows:
+        return None
+    window = rows[-120:]
+    if len(window) < 120:
+        return None
+    sig = _liq_day_signal(window)
+    if sig is None:
+        return None
+    series = compute_liq_series(rows, total_share)
+    last_score = series[-1] if series else None
+    if last_score is None:
+        return None
+    turnover = None
+    if total_share:
+        turnover = window[-1][5] * 100 / total_share * 100
+    return {
+        "trade_date": window[-1][0],
+        "liq_score": last_score,
+        "liq_daily": sig["day_signal"],
+        "price_pos": sig["price_dev"],
+        "turnover_pct": sig["vol_ratio"],
+        "pressure_pct": None,
+        "vol20": _liq_vol20(window),
+        "turnover": turnover,
+    }
 
 
 def compute_kline_metrics(rows, current_price=None):
@@ -378,8 +533,8 @@ def compute_kline_metrics(rows, current_price=None):
 
     # MA120：后120根收盘价
     if len(rows) >= 120:
-        trade_date, close_price, _, _ = rows[-1]
-        ma120 = sum(row[1] for row in rows[-120:]) / 120
+        trade_date, _, close_price, _, _, _ = rows[-1]
+        ma120 = sum(row[2] for row in rows[-120:]) / 120
         if ma120 > 0:
             effective_close = current_price if current_price is not None and current_price > 0 else close_price
             result["ma120"] = {

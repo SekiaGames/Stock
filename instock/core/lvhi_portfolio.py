@@ -695,12 +695,15 @@ def list_trades(db, limit=200):
 
 
 def _write_lvhi_kline_cache(db, code, rows):
-    """覆盖写入该股票扩展K线缓存（最多640根，多余的删除）。"""
+    """覆盖写入该股票扩展K线缓存（最多640根，多余的删除）。
+
+    rows 为 stocklist.fetch_daily_kline_rows 返回的
+    [(trade_date, open, close, high, low, volume), ...]，取收盘价（index 2）。"""
     db.execute(f"DELETE FROM `{_LVHI_KLINE_CACHE_TABLE}` WHERE `code` = %s", code)
     if not rows:
         return
     placeholders = ",".join(["(%s, %s, %s)"] * len(rows))
-    values = [v for row in rows for v in (code, row[0], row[1])]
+    values = [v for row in rows for v in (code, row[0], row[2])]
     db.execute(f"""
         INSERT INTO `{_LVHI_KLINE_CACHE_TABLE}` (`code`, `trade_date`, `close_price`)
         VALUES {placeholders}

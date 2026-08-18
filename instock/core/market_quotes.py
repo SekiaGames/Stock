@@ -8,6 +8,7 @@ import instock.lib.database as mdb
 import instock.lib.mysql as mysql
 import instock.core.stocklist as stocklist
 import instock.core.dividend as dividend
+import instock.core.financial as financial
 from instock.core.common import (
     _to_float,
     _now,
@@ -18,6 +19,8 @@ from instock.core.common import (
     _PRICE_CACHE_TABLE,
     _MA120_CACHE_TABLE,
     _KLINE_CACHE_TABLE,
+    _DETAIL_KLINE_CACHE_TABLE,
+    _LIQ_CACHE_TABLE,
     _SETTINGS_TABLE,
 )
 
@@ -33,6 +36,8 @@ _PRICE_POLL_COUNT_KEY = "price_poll_count"
 _KLINE_REFRESH_LOCK = threading.Lock()
 _KLINE_REFRESH_RUNNING = False
 _KLINE_REFRESH_ATTEMPTS = {}
+# 已确认K线历史覆盖完整的股票（次新股不足250根）：避免因根数不足反复抓取
+_KLINE_HISTORY_COMPLETE = set()
 
 
 def _stale_price_codes(cached_rows, stock_codes, high_attention_codes, now, refresh_all=False):
@@ -323,8 +328,11 @@ _KLINE_QUERY_BATCH_SIZE = 250
 
 
 def _read_kline_cache_batch(db, codes):
-    """批量读取每股最近125根日K，返回 {code: 与接口一致的升序 [(trade_date, close, high, low), ...]}；
-    分批 IN 查询 + ROW_NUMBER 截断，替代刷新线程逐股查询。"""
+    """批量读取每股最近250根日K，返回 {code: 与接口一致的升序 [(trade_date, open, close, high, low, volume), ...]}；
+    分批 IN 查询 + ROW_NUMBER 截断，替代刷新线程逐股查询。
+
+    250根 = 覆盖最近约1年，保证流动性积分指标（120日均价/均量基线 + 约20日EMA）与个股分析页
+    250根口径一致（若只取125根，EMA 仅跑6步冷启动，数值会与详情页不一致）。"""
     if not codes:
         return {}
     result = {}
@@ -332,33 +340,75 @@ def _read_kline_cache_batch(db, codes):
         batch = codes[i:i + _KLINE_QUERY_BATCH_SIZE]
         placeholders = ",".join(["%s"] * len(batch))
         rows = db.query(f"""
-            SELECT `code`, rn, `trade_date`, `close_price`, `high_price`, `low_price` FROM (
-                SELECT `code`, `trade_date`, `close_price`, `high_price`, `low_price`,
+            SELECT `code`, rn, `trade_date`, `open_price`, `close_price`, `high_price`, `low_price`, `volume` FROM (
+                SELECT `code`, `trade_date`, `open_price`, `close_price`, `high_price`, `low_price`, `volume`,
                        ROW_NUMBER() OVER (PARTITION BY `code` ORDER BY `trade_date` DESC) AS rn
                 FROM `{_KLINE_CACHE_TABLE}`
                 WHERE `code` IN ({placeholders})
-            ) t WHERE rn <= 125 ORDER BY `code`, rn
+            ) t WHERE rn <= 250 ORDER BY `code`, rn
         """, *batch)
         for row in rows:
             result.setdefault(row["code"], []).append(
                 (str(row["trade_date"])[:10],
+                 _to_float(row.get("open_price")),
                  _to_float(row.get("close_price")),
                  _to_float(row.get("high_price")),
-                 _to_float(row.get("low_price"))))
+                 _to_float(row.get("low_price")),
+                 _to_float(row.get("volume"))))
     # SQL 内按 rn 升序（新→旧），反转成与 _read_kline_cache 一致的升序（旧→新）
     return {code: items[::-1] for code, items in result.items()}
 
 
 def _write_kline_cache(db, code, rows):
-    """覆盖写入该股票K线缓存，最多125根，多余的直接删除。"""
+    """覆盖写入该股票K线缓存，最多250根，多余的直接删除。"""
     db.execute(f"DELETE FROM `{_KLINE_CACHE_TABLE}` WHERE `code` = %s", code)
     if not rows:
         return
-    placeholders = ",".join(["(%s, %s, %s, %s, %s)"] * len(rows))
-    values = [v for row in rows for v in (code, row[0], row[1], row[2], row[3])]
+    rows = rows[-250:]
+    placeholders = ",".join(["(%s, %s, %s, %s, %s, %s, %s)"] * len(rows))
+    values = [v for row in rows for v in (code, row[0], row[1], row[2], row[3], row[4], row[5])]
     db.execute(f"""
         INSERT INTO `{_KLINE_CACHE_TABLE}`
-            (`code`, `trade_date`, `close_price`, `high_price`, `low_price`)
+            (`code`, `trade_date`, `open_price`, `close_price`, `high_price`, `low_price`, `volume`)
+        VALUES {placeholders}
+    """, *values)
+
+
+# 个股分析页K线缓存：独立于列表页125根缓存，最多250根（覆盖最近约1年），
+# 首次打开页面时按需抓取补齐，避免被列表页刷新截断
+_DETAIL_KLINE_LIMIT = 250
+
+
+def _read_detail_kline_cache(db, code, limit=_DETAIL_KLINE_LIMIT):
+    """读取个股分析页K线缓存，返回升序 [(trade_date, open, close, high, low, volume), ...]（最多 limit 根）。"""
+    rows = db.query(f"""
+        SELECT `trade_date`, `open_price`, `close_price`, `high_price`, `low_price`, `volume`
+        FROM `{_DETAIL_KLINE_CACHE_TABLE}`
+        WHERE `code` = %s
+        ORDER BY `trade_date` DESC
+        LIMIT %s
+    """, code, int(limit))
+    return [(
+        str(row["trade_date"])[:10],
+        _to_float(row.get("open_price")),
+        _to_float(row.get("close_price")),
+        _to_float(row.get("high_price")),
+        _to_float(row.get("low_price")),
+        _to_float(row.get("volume")),
+    ) for row in reversed(rows)]
+
+
+def _write_detail_kline_cache(db, code, rows):
+    """覆盖写入个股分析页K线缓存，最多250根，多余的直接删除。"""
+    db.execute(f"DELETE FROM `{_DETAIL_KLINE_CACHE_TABLE}` WHERE `code` = %s", code)
+    if not rows:
+        return
+    rows = rows[-_DETAIL_KLINE_LIMIT:]
+    placeholders = ",".join(["(%s, %s, %s, %s, %s, %s, %s)"] * len(rows))
+    values = [v for row in rows for v in (code, row[0], row[1], row[2], row[3], row[4], row[5])]
+    db.execute(f"""
+        INSERT INTO `{_DETAIL_KLINE_CACHE_TABLE}`
+            (`code`, `trade_date`, `open_price`, `close_price`, `high_price`, `low_price`, `volume`)
         VALUES {placeholders}
     """, *values)
 
@@ -402,8 +452,56 @@ def _has_pending_ex_dividend(history, cached_max_date):
     return False
 
 
+def _read_liq_cache_batch(db, stock_codes):
+    """批量读取流动性指标缓存，返回 {code: row}；分批 IN 查询，替代逐股查询。"""
+    if not stock_codes:
+        return {}
+    result = {}
+    for i in range(0, len(stock_codes), _KLINE_QUERY_BATCH_SIZE):
+        batch = stock_codes[i:i + _KLINE_QUERY_BATCH_SIZE]
+        placeholders = ",".join(["%s"] * len(batch))
+        rows = db.query(f"""
+            SELECT `code`, `trade_date`, `liq_score`, `liq_daily`, `price_pos`, `turnover_pct`,
+                   `pressure_pct`, `vol20`, `turnover`, `fetched_at`
+            FROM `{_LIQ_CACHE_TABLE}`
+            WHERE `code` IN ({placeholders})
+        """, *batch)
+        for row in rows:
+            result[row["code"]] = row
+    return result
+
+
+def _write_liq_cache(db, code, metrics, now):
+    db.execute(f"""
+        INSERT INTO `{_LIQ_CACHE_TABLE}`
+            (`code`, `trade_date`, `liq_score`, `liq_daily`, `price_pos`, `turnover_pct`,
+             `pressure_pct`, `vol20`, `turnover`, `fetched_at`)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            `trade_date` = VALUES(`trade_date`),
+            `liq_score` = VALUES(`liq_score`),
+            `liq_daily` = VALUES(`liq_daily`),
+            `price_pos` = VALUES(`price_pos`),
+            `turnover_pct` = VALUES(`turnover_pct`),
+            `pressure_pct` = VALUES(`pressure_pct`),
+            `vol20` = VALUES(`vol20`),
+            `turnover` = VALUES(`turnover`),
+            `fetched_at` = VALUES(`fetched_at`)
+    """,
+               code,
+               metrics.get("trade_date"),
+               metrics.get("liq_score"),
+               metrics.get("liq_daily"),
+               metrics.get("price_pos"),
+               metrics.get("turnover_pct"),
+               metrics.get("pressure_pct"),
+               metrics.get("vol20"),
+               metrics.get("turnover"),
+               now.strftime("%Y-%m-%d %H:%M:%S"))
+
+
 def _refresh_kline_metrics(stock_codes):
-    """刷新 MA120：K线缓存已含最新交易日则直接用缓存计算，否则重新请求覆盖。
+    """刷新 MA120 与流动性指标：K线缓存已含最新交易日则直接用缓存计算，否则重新请求覆盖。
 
     K线缓存为空或缺少最新交易日K线（如容器停机未更新）时请求一次125根并覆盖；
     缓存已含最新交易日时不再请求外部接口，仅用缓存重算并写入过期的指标缓存。
@@ -422,13 +520,16 @@ def _refresh_kline_metrics(stock_codes):
         price_rows = _read_price_cache(db, stock_codes)
         price_by_code = {row["code"]: row for row in price_rows}
         ma120_by_code = _read_ma120_cache(db, stock_codes)
+        liq_by_code = _read_liq_cache_batch(db, stock_codes)
         stale_codes = [
             code for code in stock_codes
             if _is_ma120_cache_stale(ma120_by_code.get(code), now)
+            or _is_ma120_cache_stale(liq_by_code.get(code), now)
         ]
-        # 只对过期股票批量读取K线与派息历史（除息日判断用），替代逐股查询
+        # 只对过期股票批量读取K线、派息历史（除息日判断用）与财报缓存（总股本，换手率计算用），替代逐股查询
         kline_by_code = _read_kline_cache_batch(db, stale_codes)
         dividend_cache_by_code = dividend._read_dividend_history_cache_batch(db, stale_codes)
+        finance_cache_by_code = financial._read_finance_report_cache_batch(db, stale_codes)
         for code in stale_codes:
             try:
                 ma120_row = ma120_by_code.get(code, {})
@@ -438,15 +539,30 @@ def _refresh_kline_metrics(stock_codes):
 
                 rows = kline_by_code.get(code)
                 if not rows or rows[-1][0] < expected_date or _has_pending_ex_dividend(
-                        dividend_cache_by_code.get(code, (None, []))[1], rows[-1][0]):
-                    rows = stocklist.fetch_daily_kline_rows(code, today=effective_today)
+                        dividend_cache_by_code.get(code, (None, []))[1], rows[-1][0]) \
+                        or rows[-1][1] is None or rows[-1][5] is None \
+                        or (len(rows) < 250 and code not in _KLINE_HISTORY_COMPLETE):
+                    # 缺最新交易日/缺开盘价成交量/缓存根数不足250根（旧缓存截断升级）时重新请求一次；
+                    # 次新股抓取后根数仍不足250根说明历史已完整，标记后不再反复抓取
+                    rows = stocklist.fetch_daily_kline_rows(code, today=effective_today, count=250)
                     if rows is None or not rows:
                         continue
                     _write_kline_cache(db, code, rows)
+                    if len(rows) < 250:
+                        _KLINE_HISTORY_COMPLETE.add(code)
 
                 metrics = stocklist.compute_kline_metrics(rows, current_price)
                 if metrics.get("ma120") is not None and _is_ma120_cache_stale(ma120_row, now):
                     _write_ma120_cache(db, code, metrics["ma120"], now)
+                # 流动性指标：与MA120同窗口刷新（K线已含最新交易日时直接用缓存计算，不请求外部接口）；
+                # 总股本取财报缓存最新一行（总股本口径换手率，个股自身历史分位不受股本口径影响）
+                if _is_ma120_cache_stale(liq_by_code.get(code), now):
+                    finance_row = financial._latest_finance_report(
+                        finance_cache_by_code.get(code, (None, []))[1])
+                    total_share = _to_float(finance_row.get("TOTAL_SHARE")) if finance_row else None
+                    liq_metrics = stocklist.compute_liq_oversold(rows, total_share)
+                    if liq_metrics is not None:
+                        _write_liq_cache(db, code, liq_metrics, now)
             except Exception as error:
                 # 单只股票请求失败只跳过该股，不影响其余股票
                 print(f"market_quotes K线刷新跳过 {code}：{error}")

@@ -24,6 +24,7 @@ import instock.core.lvhi_portfolio as lvhi_portfolio
 import instock.lib.database as mdb
 import instock.lib.mysql as mysql
 import instock.web.highDividendHandler as highDividendHandler
+import instock.web.stockDetailHandler as stockDetailHandler
 import instock.web.lvhiHandler as lvhiHandler
 import instock.web.base as webBase
 import instock.web.scheduler as scheduler
@@ -40,6 +41,8 @@ class Application(tornado.web.Application):
             (r"/instock/high_dividend", highDividendHandler.HighDividendPageHandler),
             (r"/instock/high_dividend/api", highDividendHandler.HighDividendDataHandler),
             (r"/instock/high_dividend/followlist", highDividendHandler.FollowListHandler),
+            (r"/instock/stock", stockDetailHandler.StockDetailPageHandler),
+            (r"/instock/stock/api", stockDetailHandler.StockDetailDataHandler),
             (r"/instock/lvhi", lvhiHandler.LvhiPageHandler),
             (r"/instock/lvhi/api", lvhiHandler.LvhiOverviewHandler),
             (r"/instock/lvhi/quote", lvhiHandler.LvhiQuoteHandler),

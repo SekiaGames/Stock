@@ -205,6 +205,14 @@
         background: #99E699;
     }
 
+    .high-dividend-table tbody tr td.liq-oversold-cell {
+        background: #FFCCCC;
+    }
+
+    .high-dividend-table tbody tr td.liq-overbought-cell {
+        background: #CCEECC;
+    }
+
     .changed-name {
         color: #b42318;
         font-weight: 600;
@@ -286,7 +294,7 @@
                     <col style="width: 72px;"><!-- 股息率 -->
                     <col style="width: 72px;"><!-- 息增年 -->
                     <col style="width: 88px;"><!-- FCF/股息 -->
-                    <col style="width: 88px;"><!-- FCF/现价 -->
+                    <col style="width: 64px;"><!-- 积分 -->
                     <col style="width: 72px;"><!-- MA120 -->
                     <col style="width: 64px;"><!-- 市值 -->
                     <col style="width: 96px;"><!-- 行业 -->
@@ -300,7 +308,7 @@
                         <th class="number-cell sortable-header" data-sort-key="dividend_yield">股息率<i class="fa fa-sort sort-icon"></i></th>
                         <th class="number-cell sortable-header" data-sort-key="dividend_growth_years">息增年<i class="fa fa-sort sort-icon"></i></th>
                         <th class="number-cell sortable-header" data-sort-key="fcf_dividend">FCF/股息<i class="fa fa-sort sort-icon"></i></th>
-                        <th class="number-cell sortable-header" data-sort-key="fcf_price">FCF/现价<i class="fa fa-sort sort-icon"></i></th>
+                        <th class="number-cell sortable-header" data-sort-key="liq_score">积分<i class="fa fa-sort sort-icon"></i></th>
                         <th class="number-cell sortable-header" data-sort-key="ma120_position">MA120<i class="fa fa-sort sort-icon"></i></th>
                         <th class="number-cell sortable-header" data-sort-key="market_cap">市值<i class="fa fa-sort sort-icon"></i></th>
                         <th class="sortable-header" data-sort-key="industry_name">行业<i class="fa fa-sort sort-icon"></i></th>
@@ -420,8 +428,8 @@
         if (sortState.key === "deducted_profit_growth") {
             return direction * (parseNullableNumber(left.deducted_profit_growth) - parseNullableNumber(right.deducted_profit_growth));
         }
-        if (sortState.key === "fcf_price") {
-            return direction * (parseNullableNumber(left.fcf_price) - parseNullableNumber(right.fcf_price));
+        if (sortState.key === "liq_score") {
+            return direction * (parseNullableNumber(left.liq_score) - parseNullableNumber(right.liq_score));
         }
         if (sortState.key === "fcf_dividend") {
             return direction * (parseNullableNumber(left.fcf_dividend) - parseNullableNumber(right.fcf_dividend));
@@ -518,8 +526,34 @@
         return fcfSummaryLines(row).join("\n");
     }
 
-    function fcfPriceTooltipText(row) {
-        return fcfSummaryLines(row).join("\n");
+    function liqStateText(score) {
+        if (score === null || score === undefined || Number.isNaN(Number(score))) {
+            return "";
+        }
+        if (score >= 70) {
+            return "超卖";
+        }
+        if (score <= 30) {
+            return "超买";
+        }
+        return "中性";
+    }
+
+    function liqTooltipText(row) {
+        if (!hasKnownValue(row.liq_score)) {
+            return "";
+        }
+        const lines = [];
+        lines.push("流动性积分 " + formatNumber(row.liq_score, 0) + "（" + liqStateText(row.liq_score) + "，>70 超卖，<30 超买，约5日EMA平滑）");
+        lines.push("流动性当日 " + formatNumber(row.liq_daily, 0) + "（积分前当日原始信号）");
+        lines.push("涨跌幅 " + formatSignedPercent(row.liq_price_pos === null || row.liq_price_pos === undefined ? null : row.liq_price_pos * 100)
+            + "（当日涨跌幅，跌幅越大越超卖）");
+        lines.push("量能 " + formatPercent(row.liq_turnover_pct === null || row.liq_turnover_pct === undefined ? null : row.liq_turnover_pct * 100, 0)
+            + "（当日成交量相对120日均量，越低越缩量）");
+        lines.push("20日波动率 " + formatBlankPercent(row.liq_vol20, 2)
+            + (hasKnownValue(row.liq_turnover) ? "、换手率 " + formatBlankPercent(row.liq_turnover, 2) + "（总股本口径）" : ""));
+        lines.push("数据日期 " + (row.liq_trade_date || ""));
+        return lines.join("\n");
     }
 
     // 共用的现价行（股息率、MA120 tooltip 均使用）
@@ -695,7 +729,7 @@
     // 可排序列（与表头 data-sort-key 一致）：localStorage 中已删除列（如反弹/回落）的
     // 排序键视为无效，忽略后使用默认排序，避免静默失效
     const SORTABLE_KEYS = ["name", "period_report_published", "deducted_profit_growth",
-        "fcf_price", "fcf_dividend", "dividend_growth_years", "ma120_position",
+        "liq_score", "fcf_dividend", "dividend_growth_years", "ma120_position",
         "market_cap", "industry_name"];
 
     function loadSortState() {
@@ -761,7 +795,7 @@
         tbody.innerHTML = displayRows.map(function(row, index) {
             return [
                 '<tr>',
-                '<td><a href="https://xueqiu.com/S/' + (row.code.charAt(0) === '6' ? 'SH' : 'SZ') + row.code + '" target="_blank" rel="noopener noreferrer">',
+                '<td><a href="/instock/stock?code=' + escapeHtml(row.code) + '" target="_blank" rel="noopener noreferrer">',
                 escapeHtml(row.code),
                 '</a></td>',
                 '<td class="name-cell',
@@ -795,10 +829,12 @@
                 '">',
                 formatBlankPercent(row.fcf_dividend === null || row.fcf_dividend === undefined ? null : row.fcf_dividend * 100, 0),
                 '</td>',
-                '<td class="number-cell fcf-price-cell" title="',
-                escapeHtml(fcfPriceTooltipText(row)),
+                '<td class="number-cell liq-cell',
+                hasKnownValue(row.liq_score) && Number(row.liq_score) >= 70 ? ' liq-oversold-cell' : (hasKnownValue(row.liq_score) && Number(row.liq_score) <= 30 ? ' liq-overbought-cell' : ''),
+                '" title="',
+                escapeHtml(liqTooltipText(row)),
                 '">',
-                formatBlankPercent(row.fcf_price, 1),
+                hasKnownValue(row.liq_score) ? formatBlankNumber(row.liq_score, 0) : '--',
                 '</td>',
                 '<td class="number-cell',
                 row.ma120_signal === 'buy' ? ' ma120-buy-cell' : (row.ma120_signal === 'sell' ? ' ma120-sell-cell' : ''),
