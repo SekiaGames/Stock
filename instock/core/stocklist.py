@@ -369,37 +369,40 @@ def _parse_kline_payload(payload, market, code, today):
     return rows or None
 
 
-def _liq_base_volume(rows):
-    """基准交易量：250根K线中前120根的日均成交量（换手基准）；不足120根返回 None。
+def _liq_base_volume_for_day(rows, i):
+    """某日（索引 i）的基准交易量：该日前120日（i−120 .. i−1，不含当日）日均成交量。
 
-    rows 为升序 [(trade_date, open, close, high, low, volume), ...]。
+    rows 为升序 [(trade_date, open, close, high, low, volume), ...]；
+    前120日不足或含无效成交量返回 None。
     """
-    if not rows or len(rows) < 120:
+    if i < 120 or not rows or len(rows) < 120:
         return None
-    volumes = [row[5] for row in rows[:120]]
+    volumes = [row[5] for row in rows[i - 120:i]]
     if any(v is None or v <= 0 for v in volumes):
         return None
     return sum(volumes) / len(volumes)
 
 
 def compute_liq_daily_series(rows, total_share=None):
-    """流动性当日序列（积分前的每日原始信号）：当日 = 当日涨跌幅 × (基准交易量/当日交易量) × 100。
+    """流动性当日序列（积分前的每日原始信号）：当日 = 当日涨跌幅 × (当日基准交易量 ÷ 当日交易量) × 100。
 
-    基准交易量 = 250根K线前120根的日均成交量；涨跌幅 = 当日收盘/前一日收盘 − 1。
+    当日基准交易量 = 该日前120日（不含当日）日均成交量，每日单独计算、逐日滚动；
+    涨跌幅 = 当日收盘/前一日收盘 − 1。
     下跌且缩量（基准量/当日量 > 1）→ 负值被放大（抛压被流动性放大，超卖/黄金坑方向）；
-    上涨且放量 → 正值被缩小（超买方向）。首根无涨跌幅或当日无量返回 None。
+    上涨且放量 → 正值被缩小（超买方向）。前120日不足、首根无涨跌幅或当日无量返回 None。
     """
-    base = _liq_base_volume(rows)
-    if base is None:
-        return [None] * len(rows)
+    if not rows:
+        return []
     series = [None] * len(rows)
     prev_close = None
     for i, row in enumerate(rows):
         close = row[2]
         volume = row[5]
         if prev_close is not None and prev_close > 0 and close is not None and volume and volume > 0:
-            ret = close / prev_close - 1
-            series[i] = ret * (base / volume) * 100
+            base = _liq_base_volume_for_day(rows, i)
+            if base is not None:
+                ret = close / prev_close - 1
+                series[i] = ret * (base / volume) * 100
         prev_close = close
     return series
 
@@ -445,8 +448,8 @@ def _liq_vol20(rows):
 def compute_liq_oversold(rows, total_share=None):
     """计算最新一日流动性积分与当日值，返回 dict（含分项）或 None。
 
-    与 compute_liq_series 同口径：前120根基准交易量 + 累加积分；
-    分项返回当日涨跌幅 price_pos 与量能放大比 turnover_pct（基准交易量/当日交易量），
+    与 compute_liq_series 同口径：基准交易量每日单独计算（前120日日均量）+ 20日滚动累加积分；
+    分项返回当日涨跌幅 price_pos 与量能放大比 turnover_pct（当日基准交易量/当日交易量），
     供前端tooltip展示。
     """
     if not rows or len(rows) < 121:
@@ -459,10 +462,8 @@ def compute_liq_oversold(rows, total_share=None):
     ret = None
     if rows[-2][2] and rows[-2][2] > 0 and rows[-1][2] is not None:
         ret = rows[-1][2] / rows[-2][2] - 1
-    vol_ratio = None
-    if rows[-1][5] and rows[-1][5] > 0:
-        base = _liq_base_volume(rows)
-        vol_ratio = base / rows[-1][5]
+    base = _liq_base_volume_for_day(rows, len(rows) - 1)
+    vol_ratio = base / rows[-1][5] if base and rows[-1][5] else None
     turnover = None
     if total_share:
         turnover = rows[-1][5] * 100 / total_share * 100
@@ -470,7 +471,7 @@ def compute_liq_oversold(rows, total_share=None):
         "trade_date": rows[-1][0],
         "liq_score": last_score,
         "liq_daily": daily[-1],
-        "base_volume": _liq_base_volume(rows),
+        "base_volume": base,
         "price_pos": ret,
         "turnover_pct": vol_ratio,
         "pressure_pct": None,
