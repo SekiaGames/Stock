@@ -580,12 +580,12 @@ def _report_period_name(report_date):
 
 
 def _calculate_narrow_fcf(finance_history, cashflow_history):
-    """窄口径FCF：取最新报告期（最新季报，年报季为年报）的经营现金流净额与购建资产支出。
+    """窄口径FCF（年报口径）：取最新已完结财年年报（REPORT_DATE 为 12-31）的经营现金流净额与购建资产支出。
 
-    现金流与扣非（RPT_F10_FINANCE_MAINFINADATA）同报告期口径，最新一行即最新季报；
+    年报FCF代表全年现金流能力，无单季现金流季节性波动，是高股息股分红覆盖评估的可靠基准；
     TOTAL_SHARE 取扣非历史同报告期行（找不到时用最新一行）。
     """
-    cashflow_row = _latest_finance_report(cashflow_history)
+    cashflow_row = _latest_annual_cashflow(cashflow_history)
     if cashflow_row is None:
         return {}
 
@@ -622,9 +622,17 @@ def _calculate_narrow_fcf(finance_history, cashflow_history):
     }
 
 
+def _latest_annual_cashflow(history):
+    """现金流历史中最新已完结财年的年报行（REPORT_DATE 为 12-31）；无年报返回 None。"""
+    rows = [item for item in history or [] if _is_annual_report_row(item)]
+    if not rows:
+        return None
+    return sorted(rows, key=lambda item: _date_text(item.get("REPORT_DATE")), reverse=True)[0]
+
+
 def _calculate_financial_eps(finance_history):
-    """金融行业 FCF 替代：稀释每股收益，取最新报告期（最新季报，与 FCF 口径一致）。"""
-    finance_row = _latest_finance_report(finance_history)
+    """金融行业 FCF 替代：稀释每股收益，取最新已完结财年年报（与 FCF 年报口径一致）。"""
+    finance_row = _latest_annual_report(finance_history)
     if finance_row is None:
         return {}
 
@@ -650,7 +658,7 @@ def _calculate_financial_eps(finance_history):
 
 
 def _build_cached_narrow_fcf(finance_history, cashflow_cache_row, cashflow_history, now):
-    """由批量读取的缓存行计算窄口径FCF（纯计算，不查库）：取最新报告期（最新季报）数据；
+    """由批量读取的缓存行计算窄口径FCF（纯计算，不查库）：取最新已完结财年年报数据；
     金融行业用稀释每股收益替代。"""
     if not finance_history:
         return {}, False
